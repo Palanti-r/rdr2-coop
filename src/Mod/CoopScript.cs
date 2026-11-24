@@ -79,6 +79,8 @@ namespace RDR2Coop.Mod
         byte _owner;                 // whose game runs our area (our own id when ours)
         string _status = "";
         uint _appearAs;
+        string _guestCharacter;
+        bool _guestCharacterAttempted;
         Keys _teleportKey, _statusKey, _spawnWagonKey, _spawnTrainKey, _partyKey, _clockKey, _pokerFoldKey, _pokerDeckKey, _pokerAwayKey;
         int _clockHour = 13;
         readonly MissionParty _party = new MissionParty();
@@ -153,6 +155,7 @@ namespace RDR2Coop.Mod
             string password = ini.Get("Coop", "Password", "");
             bool preferHost = ini.Get("Coop", "PreferHost", "No").StartsWith("y", StringComparison.OrdinalIgnoreCase);
             string appearAs = ini.Get("Coop", "AppearAs", "");
+            _guestCharacter = ini.Get("Coop", "GuestCharacter", "").Trim();
             string listServer = RoomList.ListServerFrom(ini.Get("Coop", "ListServer", ""), DefaultListServer, out string listNote);
             if (listNote != null) Log(listNote);
             _listServer = listServer;
@@ -634,7 +637,7 @@ namespace RDR2Coop.Mod
             _link.Poll(now);
             if (gap > 2000) _explosions.Clear();   // partners' blasts kept while we were frozen: long over, not into the game now
             Trace("tick: host world");
-            _hostWorld.Tick(_link, now);   // every frame, connected or not: a dropped link takes the guest's own story back
+            _hostWorld.Tick(_link, now, _guestCharacter.Length == 0);   // a host-world save swap can replace the selected player model
             NoSlowMo.Tick();
 #if !NET48
             EnrageGuest.Tick(_link.State == LinkState.Connected && !_link.IAmHost && _link.Roster.Count > 1, now);
@@ -643,6 +646,7 @@ namespace RDR2Coop.Mod
 
             var me = Game.Player.Character;
             if (me == null || !me.Exists()) return;
+            if (TryGuestCharacter(me)) return;   // the game may have replaced this ped
             byte myId = _link.MyId;
             var myPos = ToNet(me.Position);
 
@@ -1311,6 +1315,46 @@ namespace RDR2Coop.Mod
 
         internal static Vec3 ToNet(Vector3 v) => new Vec3(v.X, v.Y, v.Z);
         internal static Vector3 ToGame(Vec3 v) => new Vector3(v.X, v.Y, v.Z);
+
+        bool TryGuestCharacter(Ped ped)
+        {
+            if (_guestCharacterAttempted || _guestCharacter.Length == 0 || _link.IAmHost || _link.HostId == 0
+                || _hostWorld.InHostStory || MissionProbe.StoryMission || MissionProbe.InMissionScene
+                || Activities.Busy || _down.IsDown || ped.IsDead || HUD.IS_PAUSE_MENU_ACTIVE()
+                || !CAM.IS_SCREEN_FADED_IN() || !PLAYER.IS_PLAYER_CONTROL_ON(Game.Player.Handle)
+                || PED.IS_PED_ON_MOUNT(ped.Handle) || PED.IS_PED_IN_ANY_VEHICLE(ped.Handle, false)
+                || PED.IS_PED_SWIMMING(ped.Handle) || PED.IS_PED_RAGDOLL(ped.Handle))
+                return false;
+
+            _guestCharacterAttempted = true;
+            uint model = MISC.GET_HASH_KEY(_guestCharacter);
+            if (ENTITY.GET_ENTITY_MODEL(ped.Handle) == model) return false;
+            if (!STREAMING.IS_MODEL_A_PED(model))
+            {
+                Say("Invalid guest character model: " + _guestCharacter);
+                return false;
+            }
+            try
+            {
+                if (!Peds.Load(model))
+                {
+                    Say("Could not load guest character: " + _guestCharacter);
+                    return false;
+                }
+
+                PLAYER.SET_PLAYER_MODEL(Game.Player.Handle, model, false);
+                var current = Game.Player.Character;
+                if (current != null && current.Exists() && ENTITY.GET_ENTITY_MODEL(current.Handle) == model)
+                {
+                    PED._SET_RANDOM_OUTFIT_VARIATION(current.Handle, true);
+                    PED._UPDATE_PED_VARIATION(current.Handle, false, true, true, true, false);
+                    Say("Guest character: " + _guestCharacter);
+                }
+                else Say("Could not switch to guest character: " + _guestCharacter);
+                return true;
+            }
+            finally { STREAMING.SET_MODEL_AS_NO_LONGER_NEEDED(model); }
+        }
 
         internal static void Say(string text) { if (!TableGames.Hold(text)) Screen.DisplaySubtitle(text); }
 

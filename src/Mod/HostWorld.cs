@@ -72,7 +72,7 @@ namespace RDR2Coop.Mod
         public bool InHostStory => _guard != null;
 
         /// <summary>Every frame, connected or not, host or guest.</summary>
-        public void Tick(ServerLink link, long now)
+        public void Tick(ServerLink link, long now, bool followHostStory)
         {
             if (_g == G.Swapping || _g == G.Leaving) { SwapTick(link, now); return; }
             GuardTick(now);
@@ -82,7 +82,7 @@ namespace RDR2Coop.Mod
             bool connected = link != null && link.State == LinkState.Connected;
             if (connected && _leftRepeats > 0 && now - _lastAskMs >= 1000) { _leftRepeats--; _lastAskMs = now; link.SendNotice(_host, NoticeKind.WorldShare, "left"); }
             if (connected && link.IAmHost && !InHostStory && _g == G.Off) { HostTick(link, now); return; }
-            GuestTick(link, connected && !link.IAmHost && link.Roster.Count > 1, now);
+            GuestTick(link, followHostStory && connected && !link.IAmHost && link.Roster.Count > 1, now);
         }
 
         // ---- host ----------------------------------------------------------------------------------------------
