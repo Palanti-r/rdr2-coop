@@ -69,6 +69,9 @@ game runs the area around its player and shares it when players are within 150 m
 (the host's game first).
 
 ## Build
+
+See the [build guide](BUILDING.md) for prerequisites, DLL installation, and guest character selection.
+
 `./build.sh` compiles the ScriptHookRDR2DotNet build `dist/shdn/scripts/RDR2Coop.dll`
 with mono's csc against the .NET 4.8 reference assemblies, the .NET 9 build
 `dist/RDR2Coop.asi` (the loader, `host/`) + `dist/RDR2Coop/` (the API port `api/`, the
