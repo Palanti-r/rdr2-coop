@@ -79,8 +79,9 @@ namespace RDR2Coop.Mod
         byte _owner;                 // whose game runs our area (our own id when ours)
         string _status = "";
         uint _appearAs;
-        string _guestCharacter;
-        bool _guestCharacterAttempted;
+        string _guestCharacter = "", _guestCharacterFromIni = "";
+        bool _guestCharacterAttempted, _guestCharacterChangedModel, _guestCharacterReadFailed;
+        long _nextGuestCharacterReadMs;
         Keys _teleportKey, _statusKey, _spawnWagonKey, _spawnTrainKey, _partyKey, _clockKey, _pokerFoldKey, _pokerDeckKey, _pokerAwayKey;
         int _clockHour = 13;
         readonly MissionParty _party = new MissionParty();
@@ -155,7 +156,7 @@ namespace RDR2Coop.Mod
             string password = ini.Get("Coop", "Password", "");
             bool preferHost = ini.Get("Coop", "PreferHost", "No").StartsWith("y", StringComparison.OrdinalIgnoreCase);
             string appearAs = ini.Get("Coop", "AppearAs", "");
-            _guestCharacter = ini.Get("Coop", "GuestCharacter", "").Trim();
+            _guestCharacterFromIni = ini.Get("Coop", "GuestCharacter", "").Trim();
             string listServer = RoomList.ListServerFrom(ini.Get("Coop", "ListServer", ""), DefaultListServer, out string listNote);
             if (listNote != null) Log(listNote);
             _listServer = listServer;
@@ -637,7 +638,8 @@ namespace RDR2Coop.Mod
             _link.Poll(now);
             if (gap > 2000) _explosions.Clear();   // partners' blasts kept while we were frozen: long over, not into the game now
             Trace("tick: host world");
-            _hostWorld.Tick(_link, now, _guestCharacter.Length == 0);   // a host-world save swap can replace the selected player model
+            ReadGuestCharacter(now);
+            _hostWorld.Tick(_link, now, _guestCharacter.Length == 0 && !_guestCharacterChangedModel);
             NoSlowMo.Tick();
 #if !NET48
             EnrageGuest.Tick(_link.State == LinkState.Connected && !_link.IAmHost && _link.Roster.Count > 1, now);
@@ -1316,15 +1318,41 @@ namespace RDR2Coop.Mod
         internal static Vec3 ToNet(Vector3 v) => new Vec3(v.X, v.Y, v.Z);
         internal static Vector3 ToGame(Vec3 v) => new Vector3(v.X, v.Y, v.Z);
 
+        void ReadGuestCharacter(long now)
+        {
+            if (now < _nextGuestCharacterReadMs) return;
+            _nextGuestCharacterReadMs = now + 1000;
+            string selected;
+            try
+            {
+                selected = GuestCharacterConfig.Read(_iniPath, _guestCharacterFromIni);
+                _guestCharacterReadFailed = false;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                if (!_guestCharacterReadFailed) Log("Could not read guest character selection: " + ex.Message);
+                _guestCharacterReadFailed = true;
+                return;
+            }
+
+            if (string.Equals(selected, _guestCharacter, StringComparison.OrdinalIgnoreCase)) return;
+            _guestCharacter = selected;
+            _guestCharacterAttempted = false;
+            if (selected.Length == 0 && _guestCharacterChangedModel)
+                Say("Restart and load your original save to return to your story character.");
+        }
+
+        bool CanSwapGuestCharacter(Ped ped) =>
+            _link.State == LinkState.Connected && !_link.IAmHost && _link.HostId != 0 && !_hostWorld.InHostStory
+            && !MissionProbe.StoryMission && !MissionProbe.InMissionScene && !Activities.Busy && !_down.IsDown
+            && !PickList.IsOpen && !_browser.IsOpen && !HUD.IS_PAUSE_MENU_ACTIVE()
+            && CAM.IS_SCREEN_FADED_IN() && PLAYER.IS_PLAYER_CONTROL_ON(Game.Player.Handle)
+            && ped != null && ped.Exists() && !ped.IsDead && !PED.IS_PED_ON_MOUNT(ped.Handle)
+            && !PED.IS_PED_IN_ANY_VEHICLE(ped.Handle, true) && !PED.IS_PED_SWIMMING(ped.Handle) && !PED.IS_PED_RAGDOLL(ped.Handle);
+
         bool TryGuestCharacter(Ped ped)
         {
-            if (_guestCharacterAttempted || _guestCharacter.Length == 0 || _link.IAmHost || _link.HostId == 0
-                || _hostWorld.InHostStory || MissionProbe.StoryMission || MissionProbe.InMissionScene
-                || Activities.Busy || _down.IsDown || ped.IsDead || HUD.IS_PAUSE_MENU_ACTIVE()
-                || !CAM.IS_SCREEN_FADED_IN() || !PLAYER.IS_PLAYER_CONTROL_ON(Game.Player.Handle)
-                || PED.IS_PED_ON_MOUNT(ped.Handle) || PED.IS_PED_IN_ANY_VEHICLE(ped.Handle, false)
-                || PED.IS_PED_SWIMMING(ped.Handle) || PED.IS_PED_RAGDOLL(ped.Handle))
-                return false;
+            if (_guestCharacterAttempted || _guestCharacter.Length == 0 || !CanSwapGuestCharacter(ped)) return false;
 
             _guestCharacterAttempted = true;
             uint model = MISC.GET_HASH_KEY(_guestCharacter);
@@ -1339,15 +1367,25 @@ namespace RDR2Coop.Mod
                 if (!Peds.Load(model))
                 {
                     Say("Could not load guest character: " + _guestCharacter);
-                    return false;
+                    return true;
                 }
 
-                PLAYER.SET_PLAYER_MODEL(Game.Player.Handle, model, false);
+                // Streaming can yield across frames. Wait again if the player entered an unsafe state.
                 var current = Game.Player.Character;
+                if (!CanSwapGuestCharacter(current) || current.Handle != ped.Handle)
+                {
+                    _guestCharacterAttempted = false;
+                    return true;
+                }
+                PLAYER.SET_PLAYER_MODEL(Game.Player.Handle, model, false);
+                current = Game.Player.Character;
                 if (current != null && current.Exists() && ENTITY.GET_ENTITY_MODEL(current.Handle) == model)
                 {
+                    _guestCharacterChangedModel = true;
                     PED._SET_RANDOM_OUTFIT_VARIATION(current.Handle, true);
                     PED._UPDATE_PED_VARIATION(current.Handle, false, true, true, true, false);
+                    _lastLookCheck = long.MinValue / 2;
+                    _lookSender.Resend();
                     Say("Guest character: " + _guestCharacter);
                 }
                 else Say("Could not switch to guest character: " + _guestCharacter);

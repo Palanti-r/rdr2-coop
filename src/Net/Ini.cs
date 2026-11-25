@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
 
 namespace RDR2Coop.Net
 {
@@ -11,7 +13,7 @@ namespace RDR2Coop.Net
     {
         readonly Dictionary<string, string> _values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        public static Ini Load(string path) => Parse(File.Exists(path) ? File.ReadAllText(path) : "");
+        public static Ini Load(string path) => Parse(ReadText(path));
 
         public static Ini Parse(string text)
         {
@@ -39,25 +41,114 @@ namespace RDR2Coop.Net
         // settings (the same rules as the installers).
         public static void SetCoop(string path, IDictionary<string, string> values) => Set(path, "Coop", values);
 
-        /// <summary>Writes keys into a section (added at the end if missing); a key's first occurrence anywhere is replaced.</summary>
-        public static void Set(string path, string section, IDictionary<string, string> values)
+        /// <summary>Writes keys in the requested section, keeping comments and other settings.</summary>
+        public static void Set(string path, string section, IDictionary<string, string> values) =>
+            Update(path, text => Apply(text, section, values));
+
+        public static void SetSections(string path, IDictionary<string, IDictionary<string, string>> sections)
         {
-            string text = File.Exists(path) ? File.ReadAllText(path) : "";
-            File.WriteAllText(path, Apply(text, section, values));
+            Update(path, text =>
+            {
+                foreach (var section in sections) text = Apply(text, section.Key, section.Value);
+                return text;
+            });
         }
 
         public static string Apply(string text, string section, IDictionary<string, string> values)
         {
-            foreach (var kv in values)
+            if (values.Count == 0) return text;
+            var updates = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+            var missing = new HashSet<string>(updates.Keys, StringComparer.OrdinalIgnoreCase);
+            var lines = new List<string>(text.Split('\n'));
+            string ending = text.Contains("\r\n") ? "\r" : "";
+            int header = -1;
+            bool inSection = false;
+            for (int i = 0; i < lines.Count; i++)
             {
-                var line = new Regex("^" + Regex.Escape(kv.Key) + "=[^\\r\\n]*", RegexOptions.Multiline);
-                var head = new Regex(@"^\[" + Regex.Escape(section) + @"\][ \t]*\r?$", RegexOptions.Multiline);
-                if (line.IsMatch(text)) text = line.Replace(text, m => kv.Key + "=" + kv.Value, 1);
-                else if (head.IsMatch(text)) text = head.Replace(text, m => m.Value.TrimEnd('\r') + "\r\n" + kv.Key + "=" + kv.Value + (m.Value.EndsWith("\r") ? "\r" : ""), 1);   // keep the header's own line ending whole
-                else if (section == "Coop") text = "[Coop]\r\n" + kv.Key + "=" + kv.Value + "\r\n" + text;
-                else text = text.TrimEnd('\r', '\n') + "\r\n\r\n[" + section + "]\r\n" + kv.Key + "=" + kv.Value + "\r\n";
+                string raw = lines[i];
+                string line = raw.Trim();
+                if (line.Length == 0 || line[0] == ';' || line[0] == '#') continue;
+                if (line[0] == '[' && line.EndsWith("]"))
+                {
+                    inSection = string.Equals(line.Substring(1, line.Length - 2).Trim(), section, StringComparison.OrdinalIgnoreCase);
+                    if (inSection) header = i;
+                    continue;
+                }
+                if (!inSection) continue;
+                int eq = raw.IndexOf('=');
+                if (eq <= 0) continue;
+                string key = raw.Substring(0, eq).Trim();
+                if (!updates.TryGetValue(key, out string value)) continue;
+                lines[i] = raw.Substring(0, eq + 1) + value + (raw.EndsWith("\r") ? "\r" : "");
+                missing.Remove(key);
             }
-            return text;
+
+            var additions = new List<string>();
+            foreach (var pair in updates)
+                if (missing.Contains(pair.Key)) additions.Add(pair.Key + "=" + pair.Value + ending);
+            if (additions.Count == 0) return string.Join("\n", lines);
+            if (header < 0)
+            {
+                additions.Insert(0, "[" + section + "]" + ending);
+                var block = string.Join("\n", additions) + "\n";
+                if (text.Length == 0 || string.Equals(section, "Coop", StringComparison.OrdinalIgnoreCase)) return block + text;
+                return text.TrimEnd('\r', '\n') + ending + "\n" + ending + "\n" + block;
+            }
+
+            if (header == lines.Count - 1)
+            {
+                lines[header] += ending;
+                lines.Add("");
+            }
+            lines.InsertRange(header + 1, additions);
+            return string.Join("\n", lines);
+        }
+
+        internal static string ReadText(string path)
+        {
+            try
+            {
+                using (var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete)))
+                    return reader.ReadToEnd();
+            }
+            catch (FileNotFoundException) { return ""; }
+            catch (DirectoryNotFoundException) { return ""; }
+        }
+
+        static void Update(string path, Func<string, string> transform)
+        {
+            string fullPath = Path.GetFullPath(path);
+            string mutexKey = Environment.OSVersion.Platform == PlatformID.Win32NT ? fullPath.ToUpperInvariant() : fullPath;
+            string mutexName;
+            using (var sha = SHA256.Create())
+                mutexName = "RDR2Coop.Ini." + BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(mutexKey))).Replace("-", "");
+            using (var mutex = new Mutex(false, mutexName))
+            {
+                try
+                {
+                    if (!mutex.WaitOne(2000)) throw new IOException("RDR2 Co-op settings are busy. Try again.");
+                }
+                catch (AbandonedMutexException) { } // The previous writer exited. The old settings file is still intact.
+                try
+                {
+                    string previous = ReadText(fullPath);
+                    string updated = transform(previous);
+                    if (!string.Equals(previous, updated, StringComparison.Ordinal)) WriteAtomic(fullPath, updated);
+                }
+                finally { mutex.ReleaseMutex(); }
+            }
+        }
+
+        internal static void WriteAtomic(string path, string text)
+        {
+            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, text);
+                try { File.Move(temporary, path); }
+                catch (IOException) when (File.Exists(path)) { File.Replace(temporary, path, null); }
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
     }
 }

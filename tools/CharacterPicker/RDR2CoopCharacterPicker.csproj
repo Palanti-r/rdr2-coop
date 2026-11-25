@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>RDR2CoopCharacterPicker</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Compile Include="../../src/Net/Ini.cs" Link="Ini.cs" />
+    <Compile Include="../../src/Net/GuestCharacterConfig.cs" Link="GuestCharacterConfig.cs" />
+    <EmbeddedResource Include="../../RDR2Coop.ini" LogicalName="CoopSettings.ini" />
+  </ItemGroup>
+</Project>

@@ -1,6 +1,7 @@
 // Tests for the network layer, run on Linux with mono (no game needed).
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -96,6 +97,7 @@ static class NetTests
         Run("update check: only the key's own signature passes", UpdateSignature);
         Run("beta logs: consent parsed, addresses and folders scrubbed, tail cut, uploads timed", BetaLogs);
         Run("ini: keys written into any section", IniSet);
+        Run("guest character picker: replace a selection and return to the story character without touching the INI", GuestCharacterSelection);
         Run("built-in server answers padded browser queries only", BrowserQuery);
         Run("law: crime and lawmen hashes are the game's own names", LawHashes);
         Run("law: who gets charged with what", LawCharges);
@@ -1934,6 +1936,43 @@ static class NetTests
         string v = Ini.Apply("[Coop]\r\nName=Arthur\r\n", "Testing", new System.Collections.Generic.Dictionary<string, string> { { "SendLogs", "No" } });
         Check(v.EndsWith("[Testing]\r\nSendLogs=No\r\n") && v.StartsWith("[Coop]"), "a missing section is added at the end: " + v.Replace("\r\n", "|"));
         Check(Ini.Parse(v).Get("Testing", "SendLogs", "") == "No", "and reads back");
+        string sharedKey = "[Convenience]\nChat=Yes\n\n[Keys]\n; Chat key\nchat = T\nChat=Y\n";
+        string keyChanged = Ini.Apply(sharedKey, "keys", new System.Collections.Generic.Dictionary<string, string> { { "Chat", "F6" } });
+        Check(keyChanged == "[Convenience]\nChat=Yes\n\n[Keys]\n; Chat key\nchat =F6\nChat=F6\n", "preserve other sections, comments, spelling, and line endings");
+        var parsed = Ini.Parse(keyChanged);
+        Check(parsed.Get("Convenience", "Chat", "") == "Yes" && parsed.Get("Keys", "Chat", "") == "F6", "only the requested section changes");
+    }
+
+    static void GuestCharacterSelection()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rdr2coop-character-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string path = Path.Combine(directory, "RDR2Coop.ini");
+            string original = "[Coop]\r\n; Keep this comment\r\nGuestCharacter=PLAYER_ZERO\r\nPassword=test-password\r\n";
+            File.WriteAllText(path, original);
+            string fallback = Ini.Load(path).Get("Coop", "GuestCharacter", "");
+            Check(GuestCharacterConfig.Read(path, fallback) == "PLAYER_ZERO", "use the INI when there is no picker selection");
+            GuestCharacterConfig.Save(path, "CS_MRSADLER");
+            Check(GuestCharacterConfig.Read(path, fallback) == "CS_MRSADLER", "pick Sadie");
+            GuestCharacterConfig.Save(path, "CS_CHARLESSMITH");
+            Check(GuestCharacterConfig.Read(path, fallback) == "CS_CHARLESSMITH", "switch to Charles");
+            GuestCharacterConfig.Save(path, "");
+            Check(GuestCharacterConfig.Read(path, fallback) == "", "an explicit story selection overrides the INI");
+            Check(File.ReadAllText(path) == original, "connection settings and comments remain intact");
+            Ini.SetSections(path, new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IDictionary<string, string>>
+            {
+                ["Coop"] = new System.Collections.Generic.Dictionary<string, string> { ["Port"] = "27461" },
+                ["GuestConnection"] = new System.Collections.Generic.Dictionary<string, string> { ["Server"] = "example.test" },
+            });
+            var updated = Ini.Load(path);
+            Check(updated.Get("Coop", "Port", "") == "27461" && updated.Get("Coop", "Password", "") == "test-password"
+                  && updated.Get("GuestConnection", "Server", "") == "example.test", "save both settings sections without dropping the password");
+            Check(GuestCharacterConfig.Read(path, fallback) == "", "settings edits leave the live selection intact");
+            Check(Directory.GetFiles(directory).Length == 2, "each update leaves only the INI and selection");
+        }
+        finally { Directory.Delete(directory, true); }
     }
 
     static void UpdateSignature()

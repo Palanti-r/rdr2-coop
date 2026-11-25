@@ -40,6 +40,8 @@ Load a story save; a subtitle says when you've joined. Settings live in
 `scripts/RDR2Coop.ini`, the logs in `scripts/` (`RDR2Coop.log` the mod, `RDR2Coop.Host.log` the loader,
 `RDR2Coop.Core.log` the script host) in the game folder.
 
+Use the Windows settings app to configure Guest or Host mode and pick a guest character while the game is running. [Windows settings app guide](tools/CharacterPicker/README.md)
+
 Everyone plays their own save, and the host's story is the one you share: the player whose
 story you want to play hosts, and the others come along (their own saves don't change). A save
 still in Chapter 1 keeps you in the snowy mountains with the map locked, so to join someone, be

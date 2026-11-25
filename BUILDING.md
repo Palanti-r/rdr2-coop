@@ -42,7 +42,29 @@ Close the game and back up the installed DLL. Copy `src/bin/Release/net48/RDR2Co
 
 If restore reports `NU1301` or `NU1900`, check that your build computer can reach `https://api.nuget.org/v3/index.json` and retry. If the compiler cannot find `ScriptHookRDRNetAPI`, check the filename and location under `lib/`.
 
-## Select a guest character
+## Configure the mod
+
+### Windows settings app
+
+The [Windows settings app guide](tools/CharacterPicker/README.md) covers setup, profiles, and the in-game character selection workflow.
+
+Install the updated mod DLL for your loader using the instructions above. Then build the settings app with the .NET SDK:
+
+```sh
+dotnet build tools/CharacterPicker/RDR2CoopCharacterPicker.csproj -c Release
+```
+
+Open `tools/CharacterPicker/bin/Release/net48/RDR2CoopCharacterPicker.exe` on Windows. It uses .NET Framework 4.8. To have it find your settings automatically, place the EXE in the folder containing `RDR2.exe`. You can also start it from another folder and browse to the game's `scripts/RDR2Coop.ini`.
+
+In **Connection**, choose **Guest** to join a room or **Host** to start your own. Enter the guest room address, port, and password, or the host room name, port, and password. Host settings also include online listing and UPnP. You can leave the guest address blank and join from the in-game menu.
+
+Use the other tabs to edit appearance, gameplay, convenience, network, key bindings, games, and testing options. **Save settings** writes the selected role and settings to `RDR2Coop.ini`. It remembers both connection profiles. Restart RDR2 for these settings to take effect.
+
+In **Character**, guests can choose a preset and click **Apply character**. Return to the game and stand on foot in free roam. The mod reads the selection during play. If the host's story world is already loaded, the game first returns you to your own story world. Hosts play their story character and can use **Appear As** on the General tab to change what other players see.
+
+The picker saves `RDR2Coop.character` beside your INI. It overrides `GuestCharacter` while leaving your connection settings alone. To return to your original character, choose **Story character (reload save)**, apply it, restart RDR2, and load your original save. To use the manual setting again, remove `RDR2Coop.character`.
+
+### Select a guest character manually
 
 In the game's existing `scripts/RDR2Coop.ini`, edit the `[Coop]` section and keep your server and password settings. For Sadie Adler, use:
 
@@ -57,7 +79,7 @@ For another character, copy a model name from the commented presets in the repos
 2. Have your friend host, then join their room as a guest and stand on foot in free roam.
 3. Check for the `Guest character: CS_MRSADLER` subtitle. Confirm you can control the character and your friend sees the same model.
 
-The mod attempts the switch once per game launch when you're eligible. With this setting enabled, you stay in your own story world while connected. To go back to your story character, clear `GuestCharacter`, restart the game, and load your original save.
+The manual setting is read when the mod starts. With a guest character selected, you stay in your own story world while connected. To go back to your story character, clear `GuestCharacter`, restart the game, and load your original save.
 
 ## Build the full game files on Linux
 
