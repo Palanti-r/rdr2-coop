@@ -1,0 +1,35 @@
+RDR2 Co-op Settings for Windows
+===============================
+
+This package updates an existing RDR2 Co-op installation. Match your
+installed release to the source version in VERSION.txt. The settings
+app requires .NET Framework 4.8.
+
+Install the update
+------------------
+1. Close Red Dead Redemption 2 and find the folder containing RDR2.exe.
+2. Back up your installed RDR2Coop.dll and scripts/RDR2Coop.ini.
+3. Copy the DLL for the loader you already use.
+
+   Standard loader (RDR2Coop.asi and an RDR2Coop folder):
+     Standard/RDR2Coop.dll -> <game folder>/RDR2Coop/RDR2Coop.dll
+
+   Legacy ScriptHookRDR2DotNet V2 loader:
+     Legacy/RDR2Coop.dll -> <game folder>/scripts/RDR2Coop.dll
+
+4. Keep RDR2CoopCharacterPicker.exe and its .exe.config file together.
+   Open the EXE and browse to the game's scripts/RDR2Coop.ini. If you
+   place the EXE next to RDR2.exe, it finds the INI automatically.
+
+Choose Guest or Host
+--------------------
+Open Connection, pick Guest to join a room or Host to start one, then
+enter its connection details. Click Save settings and restart RDR2.
+The app remembers both profiles.
+
+In Guest mode, open Character, choose a preset, and click Apply character.
+Return to Story Mode and stand on foot as a guest in free roam. Changing
+presets works during play.
+
+More instructions:
+https://github.com/Palanti-r/rdr2-coop/tree/master/tools/CharacterPicker
