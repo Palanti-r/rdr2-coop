@@ -31,9 +31,10 @@ presets works during play.
 
 Use the emote wheel
 -------------------
-In Story Mode, press F10 twice and choose Emote wheel in Session. Use
-the mouse, arrow keys, or right stick to select a gesture. Click or
-press Enter to play it. Esc closes the wheel.
+In Story Mode, press F10 twice and choose Emote wheel in Session. Move
+the mouse or right stick, or use the arrow keys, to highlight a segment.
+The wheel is translucent and the cursor stays hidden. Click or press
+Enter to play the highlighted gesture. Esc closes the wheel.
 
 For a direct shortcut, set Emote Menu under Key bindings in the picker.
 Save settings and restart RDR2. Hold the key, select a gesture, and

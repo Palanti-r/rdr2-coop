@@ -64,7 +64,11 @@ namespace RDR2Coop.Mod
         // Inside Centered(), the 1280x720 grid is a 16:9 area in the middle of a wider screen (an ultrawide one stretched
         // the co-op menu across all of it); outside it, the grid is the whole screen as before.
         static float _k = 1f;
-        public static void Centered(bool on) => _k = on ? Math.Min(1f, (16f / 9f) / Aspect()) : 1f;
+        public static void Centered(bool on, bool preserveAspect = false)
+        {
+            float correction = on ? (16f / 9f) / Aspect() : 1f;
+            _k = preserveAspect ? correction : Math.Min(1f, correction);
+        }
         static float X(float x) => 0.5f + (x / 1280f - 0.5f) * _k;
         static float Wd(float w) => w / 1280f * _k;
 
