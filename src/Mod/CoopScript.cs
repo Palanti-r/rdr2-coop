@@ -132,6 +132,7 @@ namespace RDR2Coop.Mod
             Interval = 0;
             Tick += OnTick;
             KeyDown += OnKeyDown;
+            KeyUp += (_, e) => PickList.OnKeyUp(e.KeyCode);
             Aborted += OnAborted;
 
             Log($"RDR2 Co-op {BuildInfo.Version} (protocol {Protocol.Version}), ScriptHookRDR2DotNet {typeof(Script).Assembly.GetName().Version}, {Environment.OSVersion}");
@@ -208,7 +209,7 @@ namespace RDR2Coop.Mod
             if (_debugMode)
                 DebugLog($"Status key: {_statusKey}. Menu shortcut: {(_browserKey == Keys.None ? _statusKey + " twice within 3 seconds" : _browserKey.ToString())}.");
             _spectate.Key = _teleportKey; ServerBrowser.Extras.Add(new MenuExtra(() => _spectate.MenuLabel, () => _spectate.MenuAct(), help: () => "Watch a partner through their camera while you're down or dead."));
-            ServerBrowser.Extras.Add(new MenuExtra(() => _emotes.MenuLabel(_link), () => _emotes.Open(), help: () => "Wave, tip your hat, point, clap and more. Your partners see it."));
+            ServerBrowser.Extras.Add(new MenuExtra(() => _emotes.MenuLabel(_link), () => _emotes.Open(_link), help: () => "Choose a gesture to play for your partners."));
             // Not while we're in the host's story as a guest: our own story comes back through this version's leave.
             ServerBrowser.Extras.Add(new MenuExtra(() => _hostWorld?.InHostStory == true ? null : _updater?.SwitchLabel, () => { if (_hostWorld?.InHostStory != true) _updater?.Switch(); }, MenuExtra.More, () => _updater?.SwitchHelp));
             ServerBrowser.Extras.Add(new MenuExtra(() => _hostWorld?.InHostStory == true ? null : _updater?.RcLabel, () => { if (_hostWorld?.InHostStory != true) _updater?.SwitchRc(); }, MenuExtra.More, () => _updater?.RcHelp));
@@ -1179,7 +1180,7 @@ namespace RDR2Coop.Mod
             if (_pings.OnKey(e.KeyCode)) return;
             if (_cutsceneTest.OnKey(e.KeyCode, _clock.ElapsedMilliseconds)) return;
             if (_softsave.OnKey(e.KeyCode, _clock.ElapsedMilliseconds)) return;
-            if (_emotes.OnKey(e.KeyCode)) return;
+            if (!_browser.IsOpen && _emotes.OnKey(e.KeyCode, _link)) return;
             if (e.KeyCode == _travelKey) { _travelPending = true; return; }
             if (e.KeyCode == _nemesisKey && _enrage.RequestList(_link)) { Say($"Co-op: asking {_link.NameOf(_link.HostId)}'s enRage about your nemeses"); return; }
             if (e.KeyCode == _reviveKey)

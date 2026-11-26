@@ -29,6 +29,16 @@ namespace RDR2Coop.Net
 
         public static string Line(int index) => "play " + index.ToString(CultureInfo.InvariantCulture);
 
+        // Slots run clockwise from the top. Positive y is down on the screen.
+        public static int WheelSlot(float x, float y)
+        {
+            const float deadZone = 0.30f;
+            if (!(x * x + y * y >= deadZone * deadZone)) return -1;
+            double angle = Math.Atan2(x, -y);
+            int slot = (int)Math.Floor(angle * All.Length / (2.0 * Math.PI) + 0.5);
+            return (slot + All.Length) % All.Length;
+        }
+
         /// <summary>The emote a partner's notice asks for: "play &lt;index&gt;" and nothing else, else -1.</summary>
         public static int Parse(string text)
         {

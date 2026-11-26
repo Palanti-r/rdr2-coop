@@ -20,7 +20,8 @@ namespace RDR2Coop.Mod
         static readonly Color Title = Color.FromArgb(255, 200, 40, 40);
 
         public static PickList Current { get; private set; }
-        public static bool IsOpen => Current != null || _ask != null;
+        public static bool IsOpen => Current != null || _ask != null || _wheel != null;
+        static EmoteWheel _wheel;
 
         readonly string _title, _hint;
         readonly IList<(string label, Action act)> _rows;
@@ -38,15 +39,28 @@ namespace RDR2Coop.Mod
         public static void Open(string title, IList<(string label, Action act)> rows, Action onCancel = null, string hint = null, int waitMs = 0)
         {
             if (rows == null || rows.Count == 0) return;
+            _wheel = null;
             Current = new PickList(title, rows, onCancel, hint, waitMs);
         }
 
-        public static void Close() { Current = null; if (_ask != null) { MISC.CANCEL_ONSCREEN_KEYBOARD(); _ask = null; } }
+        public static void OpenWheel(EmoteWheel wheel)
+        {
+            Close();
+            _wheel = wheel;
+        }
+
+        public static void Close()
+        {
+            Current = null;
+            _wheel = null;
+            if (_ask != null) { MISC.CANCEL_ONSCREEN_KEYBOARD(); _ask = null; }
+        }
 
         /// <summary>True when the key was ours (the game and the other features shouldn't act on it).</summary>
         public static bool OnKey(Keys key)
         {
             if (_ask != null) return true;   // typing into the game's keyboard
+            if (_wheel != null) { _wheel.OnKey(key); return true; }
             var p = Current;
             if (p == null) return false;
             if (p.SecondsLeft > 0) return true;   // still to be read
@@ -63,10 +77,13 @@ namespace RDR2Coop.Mod
             return true;   // every other key waits while a list is open
         }
 
+        public static void OnKeyUp(Keys key) => _wheel?.OnKeyUp(key);
+
         /// <summary>Every tick while something is open: draws the list, or minds the keyboard.</summary>
         public static void Tick()
         {
             if (_ask != null) { TickAsk(); return; }
+            if (_wheel != null) { _wheel.Tick(); return; }
             var p = Current;
             if (p == null) return;
             PAD.DISABLE_ALL_CONTROL_ACTIONS(0);
@@ -89,6 +106,7 @@ namespace RDR2Coop.Mod
             if (done == null) return;
             if (MISC.UPDATE_ONSCREEN_KEYBOARD() == 0) { done(null); return; }   // another keyboard is open
             Current = null;
+            _wheel = null;
             MISC.DISPLAY_ONSCREEN_KEYBOARD(numeric ? KeyboardNumeric : KeyboardText, "", "", "", "", "", "", Math.Max(1, maxChars) + 1);   // + 1 like ScriptHookRDR2DotNet's GetUserInput
             _ask = new Ask { Title = title, Hint = hint, Done = done, Since = Environment.TickCount };
         }

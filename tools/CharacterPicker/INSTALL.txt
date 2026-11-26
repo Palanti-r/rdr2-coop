@@ -29,6 +29,16 @@ In Guest mode, open Character, choose a preset, and click Apply character.
 Return to Story Mode and stand on foot as a guest in free roam. Changing
 presets works during play.
 
+Use the emote wheel
+-------------------
+In Story Mode, press F10 twice and choose Emote wheel in Session. Use
+the mouse, arrow keys, or right stick to select a gesture. Click or
+press Enter to play it. Esc closes the wheel.
+
+For a direct shortcut, set Emote Menu under Key bindings in the picker.
+Save settings and restart RDR2. Hold the key, select a gesture, and
+release the key to play it. Other players see emotes while connected.
+
 If the menu doesn't open
 ------------------------
 Open Diagnostics, choose the folder containing RDR2.exe, and click

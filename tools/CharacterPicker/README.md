@@ -43,6 +43,12 @@ You can choose another guest character during play. The app saves the choice in 
 
 The host controls their normal story character. Use **Appear As** under **General** to change the model other players see. For a guest, leaving **Appear As** blank lets friends see the character you've selected.
 
+## Use the emote wheel
+
+Press **F10 twice** in Story Mode and choose **Session → Emote wheel**. Move the mouse or right stick, or press the arrow keys, to highlight a gesture. The bar shows your selection and the available controls. Click or press **Enter** to play it, or press **Esc** to close the wheel.
+
+For a direct shortcut, set **Key bindings → Emote Menu**, click **Save settings**, and restart RDR2. Hold the shortcut, choose a gesture, and release it to play. Emotes sync with your partners in a connected session.
+
 ## Troubleshooting
 
 If the co-op menu gives no response, open **Diagnostics** and choose the folder containing `RDR2.exe`. This works even when the INI is missing.

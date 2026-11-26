@@ -130,6 +130,7 @@ static class NetTests
         Run("ping: round trip, bad and far positions refused, one per player every 2 s, names plain", PingRules);
         Run("give money: give and ack formats, nonce answered once, refunds after 10 s or on leaving, duplicates, floods and odd amounts dropped", GiftRules);
         Run("emotes: list fixed and sane, notices round trip, anything else refused", EmoteNotices);
+        Run("emote wheel: clockwise slots, centre deadzone, and wrap at the top", EmoteWheelSlots);
         Run("tables: messages parsed and written, bad lines, opens, seats and pays refused, settlements checked", TableMessages);
         Run("tables: open, join (range, 4 seats, asked again), cash for the next hand, leave, no seat, host leaving, too few", TableSeats);
         Run("tables: a whole high card hand for 3: cash, deal, secrets to their owner only, turns, a settlement that adds up, paid once", TableHighCardHand);
@@ -223,6 +224,19 @@ static class NetTests
                                     "play x", "PLAY 1", "stop 1", "play 1.0", "play script_common@wave@male@unapproved" })
             Check(EmoteList.Parse(bad) == -1, "refused: " + (bad ?? "null"));
         Check(EmoteList.NameOf("play 0") == "Wave" && EmoteList.NameOf("dance").StartsWith("(not an emote"), "names for the console");
+    }
+
+    static void EmoteWheelSlots()
+    {
+        var directions = new (float x, float y)[]
+        {
+            (0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1),
+        };
+        for (int i = 0; i < directions.Length; i++)
+            Check(EmoteList.WheelSlot(directions[i].x, directions[i].y) == i, "clockwise slot " + i);
+        Check(EmoteList.WheelSlot(0, 0) == -1 && EmoteList.WheelSlot(0.1f, -0.1f) == -1, "resting input selects nothing");
+        Check(EmoteList.WheelSlot(-0.05f, -1) == 0 && EmoteList.WheelSlot(0.05f, -1) == 0, "north wraps cleanly");
+        Check(EmoteList.WheelSlot(-0.5f, -1) == 7 && EmoteList.WheelSlot(0.5f, -1) == 1, "adjacent slots stay on their sides");
     }
 
     static void StatsRoundTrip()

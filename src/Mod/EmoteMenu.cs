@@ -1,11 +1,11 @@
-// The emote menu (0.9.0, [Convenience] EmoteMenu): the co-op menu's "Emote" row, or [Keys] EmoteMenu=, opens
-// a pick-list of src/Net/EmoteList.cs. We play the gesture on the upper body (we can keep walking or riding),
+// The co-op menu's Emote wheel row or [Keys] EmoteMenu opens a wheel of gestures from src/Net/EmoteList.cs.
+// We play the gesture on the upper body (we can keep walking or riding),
 // and partners get "play <index>" (NoticeKind.Emote) and play the same on our stand-in (Puppet.PlayEmote).
 // An animation streams in over a few ticks, never waited for: given 2 s, then "that emote isn't available"
 // (a partner's is just skipped) and one log line per animation. No emotes in a story cutscene or mission, at
 // the game's tables or other activities (Activities.Busy), while down, in a vehicle or swimming; a partner's
 // shows only on a stand-in that's here. Nothing to remove afterwards: a gesture ends by itself, and the
-// animations we asked for are let go in Clear. It draws nothing of its own (the pick-list does).
+// animations we asked for are let go in Clear.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,7 +20,7 @@ namespace RDR2Coop.Mod
     {
         const int LoadMs = 2000;
 
-        public Keys Key;   // [Keys] EmoteMenu: opens the list (empty = the co-op menu's row only)
+        public Keys Key;   // [Keys] EmoteMenu: hold to open the wheel (empty = the co-op menu's row only)
         sealed class Pending { public byte Who; public int Index; public long Since = -1; }   // Who 0: us
         readonly List<Pending> _pending = new List<Pending>();   // one per player at most
         readonly Dictionary<byte, BlastGate> _gates = new Dictionary<byte, BlastGate>();   // 5 notices a second per sender
@@ -28,20 +28,27 @@ namespace RDR2Coop.Mod
 
         static bool Allowed => Extras.EmoteMenu && !MissionProbe.InMissionScene && !MissionProbe.StoryMission && !Activities.Busy;
 
-        public string MenuLabel(ServerLink link) => link != null && Allowed ? "Emote" : null;
+        static bool CanShowWheel() => Allowed && !Chat.Typing && !HUD.IS_PAUSE_MENU_ACTIVE()
+            && CAM.IS_SCREEN_FADED_IN() && !CAM.IS_SCREEN_FADING_OUT();
 
-        public bool OnKey(Keys key)
+        public string MenuLabel(ServerLink link) => link != null && Allowed ? "Emote wheel" : null;
+
+        public bool OnKey(Keys key, ServerLink link)
         {
             if (!Extras.EmoteMenu || Key == Keys.None || key != Key) return false;
-            Open();
+            Open(link, key);
             return true;
         }
 
-        public void Open()
+        public void Open(ServerLink link, Keys holdKey = Keys.None)
         {
             if (!Allowed) { Say("Co-op: no emotes in a cutscene, a mission or a game"); return; }
-            PickList.Open("Emote (your partners see it)", EmoteList.All.Select((e, i) =>
-                (e.Label + (_missing.Contains(e.Dict) ? " (not available)" : ""), (Action)(() => Queue(0, i)))).ToList());
+            if (!CanShowWheel()) return;
+            PickList.OpenWheel(new EmoteWheel(holdKey, CanShowWheel, i => _missing.Contains(EmoteList.All[i].Dict), i =>
+            {
+                if (link.State == LinkState.Connected) Queue(0, i);
+                else Say("Co-op: connect to a session to play emotes");
+            }));
         }
 
         // A partner's Emote notice: "play <index>" from someone in the roster, 5 a second at most.
