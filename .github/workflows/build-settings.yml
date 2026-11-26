@@ -24,12 +24,7 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Install RAR extraction tool
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libarchive-tools
-
-      - name: Build the Windows package
+      - name: Build and verify the full Windows package
         run: python3 tools/CharacterPicker/build-package.py
 
       - name: Run co-op tests

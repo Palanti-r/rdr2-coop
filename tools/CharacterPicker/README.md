@@ -6,17 +6,17 @@ Use `RDR2CoopCharacterPicker.exe` to set up a guest or host connection, edit co-
 
 Open the [Build Windows settings app workflow](https://github.com/Palanti-r/rdr2-coop/actions/workflows/build-settings.yml), choose a successful run, and download **RDR2-Coop-Settings.zip** under **Artifacts**. The workflow runs on pushes to `master`. You can also start it with **Run workflow**.
 
-Extract the ZIP and follow `README.txt` inside. The package includes the settings EXE, its configuration file, and DLLs for both loaders. You need an existing RDR2 Co-op installation that matches `VERSION.txt` in the ZIP and .NET Framework 4.8 on the Windows computer where you play.
+Extract the ZIP outside the game folder, open `RDR2-Coop/`, and follow `README-SETTINGS.txt`. The package includes the Windows installer, native loader, bundled .NET runtime, compatibility libraries, standalone server, optional enRage patch, and the settings EXE. Run `RDR2CoopSetup.exe` to install the mod, then open the settings EXE. The installer fetches ScriptHookRDR2 if needed. The settings EXE uses .NET Framework 4.8.
 
 ## Build the ZIP locally
 
-Install the .NET 9 SDK, Python 3, and either 7-Zip or `bsdtar`. Run this from the repository root:
+Install the .NET 9 SDK and Python 3. Run this from the repository root:
 
 ```sh
 python3 tools/CharacterPicker/build-package.py
 ```
 
-On Windows, use `py` in place of `python3` if needed. The builder downloads and verifies the ScriptHookRDR2DotNet V2 2.2.0 build reference if needed and writes `dist/RDR2-Coop-Settings.zip`.
+On Windows, use `py` in place of `python3` if needed. The builder verifies the upstream Windows ZIP against its pinned SHA-256 and uses the included ScriptHookRDR2DotNet API to compile the legacy DLL. It replaces the two mod DLLs and their INIs, adds the settings app, and verifies every file in `dist/RDR2-Coop-Settings.zip`. All other files from the official package are preserved byte-for-byte. [Matching upstream release](https://github.com/BigCheeseThe3st/rdr2-coop/releases/tag/v0.9.0-beta.8.5)
 
 Keep `RDR2CoopCharacterPicker.exe` and `RDR2CoopCharacterPicker.exe.config` together. Place them next to `RDR2.exe` so the app can find `scripts/RDR2Coop.ini` automatically. If you open the app from another folder, click **Browse** and select the INI inside your game installation.
 

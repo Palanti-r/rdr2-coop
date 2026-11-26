@@ -1,25 +1,23 @@
 RDR2 Co-op Settings for Windows
 ===============================
 
-This package updates an existing RDR2 Co-op installation. Match your
-installed release to the source version in VERSION.txt. The settings
-app requires .NET Framework 4.8.
+VERSION.txt identifies the upstream Windows installer bundled with this
+fork. The bundle includes the standard loader, its .NET runtime and
+support libraries, the legacy build, and the settings app. The settings
+app uses .NET Framework 4.8.
 
-Install the update
-------------------
-1. Close Red Dead Redemption 2 and find the folder containing RDR2.exe.
-2. Back up your installed RDR2Coop.dll and scripts/RDR2Coop.ini.
-3. Copy the DLL for the loader you already use.
+Install
+-------
+1. Close the game and extract this ZIP outside the game folder. Back up
+   your existing saves and co-op settings if you're updating.
+2. Open the extracted RDR2-Coop folder and run RDR2CoopSetup.exe. Follow
+   its prompts. The installer fetches ScriptHookRDR2 if you need it.
+3. Open RDR2CoopCharacterPicker.exe from the same extracted folder and
+   browse to scripts/RDR2Coop.ini inside your game installation.
 
-   Standard loader (RDR2Coop.asi and an RDR2Coop folder):
-     Standard/RDR2Coop.dll -> <game folder>/RDR2Coop/RDR2Coop.dll
-
-   Legacy ScriptHookRDR2DotNet V2 loader:
-     Legacy/RDR2Coop.dll -> <game folder>/scripts/RDR2Coop.dll
-
-4. Keep RDR2CoopCharacterPicker.exe and its .exe.config file together.
-   Open the EXE and browse to the game's scripts/RDR2Coop.ini. If you
-   place the EXE next to RDR2.exe, it finds the INI automatically.
+For manual installation, see README-PLAYERS.txt. If you already use the
+legacy loader, its DLL is under shdn/scripts. Keep only one co-op loader
+active.
 
 Choose Guest or Host
 --------------------
@@ -30,6 +28,9 @@ The app remembers both profiles.
 In Guest mode, open Character, choose a preset, and click Apply character.
 Return to Story Mode and stand on foot as a guest in free roam. Changing
 presets works during play.
+
+To keep using the fork's guest character picker, install updates from this
+fork. The in-game upstream update installs the official mod DLL.
 
 More instructions:
 https://github.com/Palanti-r/rdr2-coop/tree/master/tools/CharacterPicker
