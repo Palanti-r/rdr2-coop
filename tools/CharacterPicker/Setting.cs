@@ -41,7 +41,8 @@ sealed class Setting
                 if (section.Length > 0 && equals > 0 && !line.StartsWith(";"))
                 {
                     string key = line.Substring(0, equals).Trim();
-                    if (section != "Coop" || !ConnectionKeys.Contains(key))
+                    bool diagnostics = section == "Testing" && key == "DebugMode";
+                    if (!diagnostics && (section != "Coop" || !ConnectionKeys.Contains(key)))
                     {
                         string description = string.Join(" ", comments);
                         if (description.StartsWith(key + ":", StringComparison.OrdinalIgnoreCase))

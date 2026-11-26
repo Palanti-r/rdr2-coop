@@ -18,7 +18,7 @@ python3 tools/CharacterPicker/build-package.py
 
 On Windows, use `py` in place of `python3` if needed. The builder verifies the upstream Windows ZIP against its pinned SHA-256 and uses the included ScriptHookRDR2DotNet API to compile the legacy DLL. It replaces the two mod DLLs and their INIs, adds the settings app, and verifies every file in `dist/RDR2-Coop-Settings.zip`. All other files from the official package are preserved byte-for-byte. [Matching upstream release](https://github.com/BigCheeseThe3st/rdr2-coop/releases/tag/v0.9.0-beta.8.5)
 
-Keep `RDR2CoopCharacterPicker.exe` and `RDR2CoopCharacterPicker.exe.config` together. Place them next to `RDR2.exe` so the app can find `scripts/RDR2Coop.ini` automatically. If you open the app from another folder, click **Browse** and select the INI inside your game installation.
+Keep `RDR2CoopCharacterPicker.exe` and `RDR2CoopCharacterPicker.exe.config` together. Place them next to `RDR2.exe` to find the installed INI automatically. If you open the app from another folder, select the game directory under **Diagnostics** or click **Browse** and select the INI inside your game installation.
 
 ## Join or host a room
 
@@ -44,6 +44,12 @@ You can choose another guest character during play. The app saves the choice in 
 The host controls their normal story character. Use **Appear As** under **General** to change the model other players see. For a guest, leaving **Appear As** blank lets friends see the character you've selected.
 
 ## Troubleshooting
+
+If the co-op menu gives no response, open **Diagnostics** and choose the folder containing `RDR2.exe`. This works even when the INI is missing.
+
+1. Click **Check files and logs**. **File checks** shows missing or empty loader files, ScriptHook files, and bundled runtime libraries. It also detects an older legacy install that can take precedence over the standard loader.
+2. Click **Enable debug logging**, then restart RDR2 and load Story Mode. Try the menu shortcut again. The mod records whether it received the key and opened the menu in `scripts/RDR2Coop.log`.
+3. Return to the picker, click **Check files and logs**, and open **Recent logs**. You can use **Copy report** to copy the checks and recent log lines for troubleshooting.
 
 - If the app opens with empty settings, use **Browse** and check that the path points to the game's INI. The repository's sample INI is a separate file.
 - If a character choice appears saved but the model stays the same, confirm that the updated mod DLL is installed and that you are a guest on foot outside a mission or cutscene.

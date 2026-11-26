@@ -21,8 +21,10 @@ sealed class CharacterPicker : Form
     const string IniName = "RDR2Coop.ini";
     const string PresetPrefix = "; GuestCharacter=";
     readonly TextBox _location = new TextBox { ReadOnly = true, Dock = DockStyle.Fill, AccessibleName = "Settings file" };
-    readonly TabControl _tabs = new TabControl { Dock = DockStyle.Fill, Multiline = true, Enabled = false };
+    readonly TabControl _tabs = new TabControl { Dock = DockStyle.Fill, Multiline = true };
     readonly ConnectionPage _connection = new ConnectionPage();
+    readonly DiagnosticsPage _diagnostics;
+    readonly TabPage _characterPage;
     readonly SettingsPage[] _settings;
     readonly ComboBox _characters = new ComboBox
     {
@@ -74,15 +76,31 @@ sealed class CharacterPicker : Form
         _settings = supported.GroupBy(setting => setting.Section).Select(group =>
             new SettingsPage(TabTitle(group.Key), group)).ToArray();
 
+        _characterPage = CreateCharacterPage();
+        _diagnostics = new DiagnosticsPage(SelectGameFolder);
         _tabs.TabPages.Add(_connection);
-        _tabs.TabPages.Add(CreateCharacterPage());
+        _tabs.TabPages.Add(_characterPage);
+        _tabs.TabPages.Add(_diagnostics);
         _tabs.TabPages.AddRange(_settings);
+        _tabs.SelectedIndexChanged += async (_, __) =>
+        {
+            if (_tabs.SelectedTab == _diagnostics) await _diagnostics.RefreshReport();
+        };
+        SetEditingEnabled(false);
         UpdateCharacterPage();
 
         string folder = AppDomain.CurrentDomain.BaseDirectory;
-        string path = new[] { Path.Combine(folder, "scripts", IniName), Path.Combine(folder, IniName) }.FirstOrDefault(File.Exists);
-        if (path == null) _status.Text = "Browse to RDR2Coop.ini in the scripts folder of your RDR2 installation.";
-        else OpenSettings(path);
+        if (File.Exists(Path.Combine(folder, "RDR2.exe")))
+        {
+            string path = InstallationDiagnostics.FindActiveIni(folder);
+            if (path != null) OpenSettings(path);
+            else SelectGameFolder(folder);
+        }
+        else
+        {
+            _tabs.SelectedTab = _diagnostics;
+            _status.Text = "Choose the game folder or browse to its installed RDR2Coop.ini.";
+        }
     }
 
     static string TabTitle(string section)
@@ -133,25 +151,62 @@ sealed class CharacterPicker : Form
         _characters.SelectedIndex = 0;
     }
 
-    void Browse()
+    async void Browse()
     {
         using (var dialog = new OpenFileDialog { FileName = IniName, Filter = "RDR2 Co-op settings|RDR2Coop.ini", CheckFileExists = true })
         {
             if (_iniPath != null) dialog.InitialDirectory = Path.GetDirectoryName(_iniPath);
-            if (dialog.ShowDialog(this) == DialogResult.OK) OpenSettings(dialog.FileName);
+            if (dialog.ShowDialog(this) == DialogResult.OK && OpenSettings(dialog.FileName) && _tabs.SelectedTab == _diagnostics)
+                await _diagnostics.RefreshReport();
         }
     }
 
-    void OpenSettings(string path)
+    async void SelectGameFolder(string folder)
+    {
+        string path = File.Exists(Path.Combine(folder, "RDR2.exe")) ? InstallationDiagnostics.FindActiveIni(folder) : null;
+        if (path == null || !OpenSettings(path))
+        {
+            _iniPath = null;
+            _location.Clear();
+            SetEditingEnabled(false);
+            _diagnostics.SetTarget(folder, null);
+            if (path == null) _status.Text = "Choose an installed RDR2Coop.ini to edit settings or review the file checks.";
+        }
+
+        if (_tabs.SelectedTab == _diagnostics) await _diagnostics.RefreshReport();
+        else _tabs.SelectedTab = _diagnostics;
+    }
+
+    void SetEditingEnabled(bool enabled)
+    {
+        _connection.Enabled = _characterPage.Enabled = _save.Enabled = enabled;
+        foreach (var page in _settings) page.Enabled = enabled;
+    }
+
+    bool OpenSettings(string path)
     {
         if (!string.Equals(Path.GetFileName(path), IniName, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
         {
             _status.Text = "Choose an existing RDR2Coop.ini file.";
-            return;
+            return false;
         }
 
         try
         {
+            string folder = InstallationDiagnostics.GameDirectoryForIni(path);
+            if (folder == null || !File.Exists(Path.Combine(folder, "RDR2.exe")))
+            {
+                _status.Text = "That INI is outside the installed game folder. Choose the folder containing RDR2.exe.";
+                return false;
+            }
+            string active = InstallationDiagnostics.FindActiveIni(folder);
+            if (active == null)
+            {
+                _status.Text = "The loader cannot find this INI. Check the game folder in Diagnostics.";
+                return false;
+            }
+            bool redirected = !string.Equals(Path.GetFullPath(path), active, StringComparison.OrdinalIgnoreCase);
+            path = active;
             var ini = Ini.Load(path);
             string model = GuestCharacterConfig.Read(path, ini.Get("Coop", "GuestCharacter", ""));
             _connection.LoadSettings(ini);
@@ -168,12 +223,15 @@ sealed class CharacterPicker : Form
             _iniPath = path;
             _location.Text = path;
             _characters.SelectedItem = choice;
-            _tabs.Enabled = _save.Enabled = true;
-            _status.Text = "Settings loaded.";
+            SetEditingEnabled(true);
+            _diagnostics.SetTarget(folder, path);
+            _status.Text = redirected ? "Opened the INI used by the active loader." : "Settings loaded.";
+            return true;
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
         {
             _status.Text = "Could not load settings. " + ex.Message;
+            return false;
         }
     }
 

@@ -60,7 +60,8 @@ namespace RDR2Coop.Mod
         ServerBrowser _browser;
         Updater _updater;
         Keys _browserKey;          // None: the status key pressed twice opens the browser
-        int _lastStatusKey;
+        long _lastStatusKeyMs = -3000;
+        bool _debugMode;
         string _iniPath, _name = "", _password = "";
         LogSender _logs;   // beta builds: opt-in log uploads (Net/LogShare.cs)
         bool _preferHost;
@@ -150,6 +151,8 @@ namespace RDR2Coop.Mod
             if (!File.Exists(iniPath)) Log("settings file not found next to the game or in scripts\\; using defaults");
             var ini = Ini.Load(iniPath);
             _iniPath = iniPath;
+            _debugMode = ini.Get("Testing", "DebugMode", "No").Equals("Yes", StringComparison.OrdinalIgnoreCase);
+            DebugLog("Debug mode enabled. Settings file: " + iniPath);
             string name = ini.Get("Coop", "Name", Environment.UserName);
             string server = ini.Get("Coop", "Server", "127.0.0.1");
             int port = ini.Get("Coop", "Port", ServerLink.DefaultPort);
@@ -202,6 +205,8 @@ namespace RDR2Coop.Mod
                                          () => _link != null && _link.IAmHost ? (_party.IsHosting ? "Mission party: on (switch off)" : "Mission party: off (switch on)") : null,
                                          () => _party.Toggle(_link), _browserKey != Keys.None ? _browserKey : _statusKey,
                                          () => _updater?.MenuLabel, () => _updater?.Begin());
+            if (_debugMode)
+                DebugLog($"Status key: {_statusKey}. Menu shortcut: {(_browserKey == Keys.None ? _statusKey + " twice within 3 seconds" : _browserKey.ToString())}.");
             _spectate.Key = _teleportKey; ServerBrowser.Extras.Add(new MenuExtra(() => _spectate.MenuLabel, () => _spectate.MenuAct(), help: () => "Watch a partner through their camera while you're down or dead."));
             ServerBrowser.Extras.Add(new MenuExtra(() => _emotes.MenuLabel(_link), () => _emotes.Open(), help: () => "Wave, tip your hat, point, clap and more. Your partners see it."));
             // Not while we're in the host's story as a guest: our own story comes back through this version's leave.
@@ -1141,16 +1146,27 @@ namespace RDR2Coop.Mod
         void OnKeyDown(object sender, KeyEventArgs e)
         {
             TableGames.Answering = true;   // what our keys answer shows even at a card table
+            bool menuKey = _debugMode && (e.KeyCode == Keys.F10 || e.KeyCode == _statusKey || e.KeyCode == _browserKey);
+            if (menuKey) DebugLog($"Received {e.KeyCode}. Co-op connection: {_link?.State.ToString() ?? "not initialized"}.");
             if (_link == null)
             {
                 // Start failed: the status key says why.
                 if (e.KeyCode == (_statusKey == Keys.None ? Keys.F10 : _statusKey) && _status.Length > 0) Say(_status);
                 return;
             }
-            if (_chat.OnKey(e.KeyCode, _link, _browser.IsOpen || PickList.IsOpen, _clock.ElapsedMilliseconds)) return;
-            if (PickList.IsOpen) { PickList.OnKey(e.KeyCode); return; }
-            if (_browser.IsOpen && (e.KeyCode == _browserKey || e.KeyCode == _statusKey)) { _browser.Toggle(); return; }
-            if (_browserKey != Keys.None && e.KeyCode == _browserKey) { _browser.Toggle(); return; }
+            if (_chat.OnKey(e.KeyCode, _link, _browser.IsOpen || PickList.IsOpen, _clock.ElapsedMilliseconds))
+            {
+                if (menuKey) DebugLog("The chat handled the key.");
+                return;
+            }
+            if (PickList.IsOpen)
+            {
+                if (menuKey) DebugLog("A co-op dialog is waiting for input.");
+                PickList.OnKey(e.KeyCode);
+                return;
+            }
+            if (_browser.IsOpen && (e.KeyCode == _browserKey || e.KeyCode == _statusKey)) { ToggleBrowser(); return; }
+            if (_browserKey != Keys.None && e.KeyCode == _browserKey) { ToggleBrowser(); return; }
             if (_browser.OnKey(e.KeyCode)) return;
             if (_logs != null && _logs.OnKey(e.KeyCode)) return;   // the beta-logs question comes before every other Y/N
             if (_hostWorld != null && _hostWorld.OnKey(e.KeyCode)) return;   // bring back the last session's checkpoint?
@@ -1180,14 +1196,16 @@ namespace RDR2Coop.Mod
             if (e.KeyCode == Keys.Y || e.KeyCode == Keys.N) _party.OnKey(e.KeyCode, _link);
             if (e.KeyCode == _statusKey)
             {
-                if (_browserKey == Keys.None && Environment.TickCount - _lastStatusKey < 3000)
+                long now = _clock.ElapsedMilliseconds;
+                if (_browserKey == Keys.None && now - _lastStatusKeyMs < 3000)
                 {
-                    _lastStatusKey = 0;
-                    _browser.Toggle();
+                    _lastStatusKeyMs = -3000;
+                    ToggleBrowser();
                     return;
                 }
-                _lastStatusKey = Environment.TickCount;
-                _partyList.Show(_clock.ElapsedMilliseconds);
+                _lastStatusKeyMs = now;
+                _partyList.Show(now);
+                if (menuKey) DebugLog("Showing co-op status.");
                 string players = string.Join(", ", _link.Roster.Select(p => p.Name + (p.Role == PlayerRole.Host ? " (host)" : "")
                                                                             + _tables.Doing(p.Id, _link.MyId, _clock.ElapsedMilliseconds)));
                 string area = _owner == 0 ? "-" : _owner == _link.MyId ? "your game" : _link.NameOf(_owner) + "'s game";
@@ -1318,6 +1336,23 @@ namespace RDR2Coop.Mod
         internal static Vec3 ToNet(Vector3 v) => new Vec3(v.X, v.Y, v.Z);
         internal static Vector3 ToGame(Vec3 v) => new Vector3(v.X, v.Y, v.Z);
 
+        void ToggleBrowser()
+        {
+            _browser.Toggle();
+            DebugLog(_browser.IsOpen ? "Co-op menu opened." : "Co-op menu closed.");
+        }
+
+        void DebugLog(string text)
+        {
+            if (_debugMode) Log("debug: " + text);
+        }
+
+        void ReportGuestCharacter(string text)
+        {
+            DebugLog(text);
+            Say(text);
+        }
+
         void ReadGuestCharacter(long now)
         {
             if (now < _nextGuestCharacterReadMs) return;
@@ -1338,8 +1373,10 @@ namespace RDR2Coop.Mod
             if (string.Equals(selected, _guestCharacter, StringComparison.OrdinalIgnoreCase)) return;
             _guestCharacter = selected;
             _guestCharacterAttempted = false;
+            if (selected.Length > 0 && _debugMode)
+                DebugLog("Guest character requested: " + selected + ". Waiting for guest free roam.");
             if (selected.Length == 0 && _guestCharacterChangedModel)
-                Say("Restart and load your original save to return to your story character.");
+                ReportGuestCharacter("Restart and load your original save to return to your story character.");
         }
 
         bool CanSwapGuestCharacter(Ped ped) =>
@@ -1359,14 +1396,14 @@ namespace RDR2Coop.Mod
             if (ENTITY.GET_ENTITY_MODEL(ped.Handle) == model) return false;
             if (!STREAMING.IS_MODEL_A_PED(model))
             {
-                Say("Invalid guest character model: " + _guestCharacter);
+                ReportGuestCharacter("Invalid guest character model: " + _guestCharacter);
                 return false;
             }
             try
             {
                 if (!Peds.Load(model))
                 {
-                    Say("Could not load guest character: " + _guestCharacter);
+                    ReportGuestCharacter("Could not load guest character: " + _guestCharacter);
                     return true;
                 }
 
@@ -1386,9 +1423,9 @@ namespace RDR2Coop.Mod
                     PED._UPDATE_PED_VARIATION(current.Handle, false, true, true, true, false);
                     _lastLookCheck = long.MinValue / 2;
                     _lookSender.Resend();
-                    Say("Guest character: " + _guestCharacter);
+                    ReportGuestCharacter("Guest character: " + _guestCharacter);
                 }
-                else Say("Could not switch to guest character: " + _guestCharacter);
+                else ReportGuestCharacter("Could not switch to guest character: " + _guestCharacter);
                 return true;
             }
             finally { STREAMING.SET_MODEL_AS_NO_LONGER_NEEDED(model); }
