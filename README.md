@@ -65,6 +65,10 @@ Players who can't host can start a dedicated room from the Discord's #find-a-par
 (name and password of their choice; it stops after 30 minutes empty). `rooms-server/` is
 the Discord side (a Cloudflare Worker), `server/rooms/` the helper that runs the rooms.
 
+For connection troubleshooting, open the picker's **Diagnostics → Network log**.
+Both host and guest can copy their latest connection events from there.
+[Network logging guide](tools/CharacterPicker/README.md#troubleshoot-a-connection)
+
 The first player in hosts (PreferHost=Yes takes over when the host leaves, and gets
 the role back after dropping out, unless the stand-in prefers hosting too); every
 game runs the area around its player and shares it when players are within 150 m

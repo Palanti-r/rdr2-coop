@@ -60,3 +60,9 @@ If the co-op menu gives no response, open **Diagnostics** and choose the folder 
 - If the app opens with empty settings, use **Browse** and check that the path points to the game's INI. The repository's sample INI is a separate file.
 - If a character choice appears saved but the model stays the same, confirm that the updated mod DLL is installed and that you are a guest on foot outside a mission or cutscene.
 - If you prefer to select a guest character manually, remove `RDR2Coop.character` and use the `GuestCharacter` setting in the [mod configuration](../../RDR2Coop.ini).
+
+### Troubleshoot a connection
+
+In **Diagnostics**, click **Check files and logs** and open **Network log**. The mod records join attempts, refusals, reconnects, room discovery, and host startup and UPnP results in `scripts/RDR2Coop.Network.log`. **Copy network log** copies the latest entries from that file. It records status codes and counts and omits IP addresses, player names, room names, passwords, and chat. This log is stored locally.
+
+For retry details and packet and byte counts, click **Enable detailed network logging**, restart RDR2, repeat the connection attempt, and refresh the log. This sets `NetworkDebug=Yes` under `[Testing]` in the installed INI. The mod keeps the last rotated log as `RDR2Coop.Network.log.previous` in the same folder.

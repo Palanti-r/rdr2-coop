@@ -47,6 +47,13 @@ Check files and logs. Enable debug logging and restart RDR2 to record
 menu shortcuts and character messages. Try the shortcut in Story Mode,
 then check Recent logs in the picker.
 
+If you can't connect
+--------------------
+Open Diagnostics, click Check files and logs, and open Network log for
+recent results. Copy network log copies the redacted connection log.
+For more detail, click Enable detailed network logging, restart RDR2,
+and repeat the connection attempt. Refresh the log in the picker.
+
 To keep using the fork's guest character picker, install updates from this
 fork. The in-game upstream update installs the official mod DLL.
 

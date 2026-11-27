@@ -76,6 +76,8 @@ static class NetTests
         Run("relay: the join log names each player's mod version and build", RelayJoinLogsBuild);
         Run("room list: a refusal shows as its sentence, other replies as they came", ListRefusalText);
         Run("room list: ListServer= that isn't a web address falls back to the default, off turns it off", ListServerSetting);
+        Run("network log: concurrent appends rotate to a single previous file", NetworkLogRotation);
+        Run("network log: local UDP connection and refusal leave no personal connection data", NetworkLogConnection);
         Run("authority: why a guest runs its own area is named for the log", AuthorityWhyOwn);
         Run("beta logs: install ids the log store accepts, and new ones that are", LogsInstallIds);
         Run("party down: the game's death only once every partner is down", PartyDownAll);
@@ -3106,6 +3108,58 @@ static class NetTests
         Check(RoomList.ErrorText("{\"error\":\"your internet provider shares your address\"}") == "your internet provider shares your address", "the sentence only");
         Check(RoomList.ErrorText("Bad Gateway") == "Bad Gateway", "not JSON: as it came");
         Check(RoomList.ErrorText("{}") == "{}", "JSON without an error: as it came");
+    }
+
+    static void NetworkLogRotation()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "rdr2coop-network-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string path = Path.Combine(folder, NetworkLog.FileName), previous = path + ".previous";
+            File.WriteAllText(previous, "older log");
+            using (var file = File.Create(path))
+            {
+                file.WriteByte(42);
+                file.SetLength(NetworkLog.MaxBytes);
+            }
+            var log = new NetworkLog(folder);
+            System.Threading.Tasks.Parallel.For(0, 32, i => log.Write($"component=test event=rotation seq={i}"));
+            var lines = File.ReadAllLines(path);
+            Check(lines.Length == 32 && Enumerable.Range(0, 32).All(i => lines.Count(line => line.EndsWith("seq=" + i)) == 1),
+                "every concurrent event is preserved as one line");
+            Check(lines.All(line => line.Contains("Z session=")), "UTC timestamp and launch identifier are present");
+            Check(new FileInfo(previous).Length == NetworkLog.MaxBytes && Directory.GetFiles(folder).Length == 2,
+                "the previous log was replaced during rotation");
+            new NetworkLog(path).Write("component=test event=directory_unavailable");
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    static void NetworkLogConnection()
+    {
+        const string name = "fixture-player-private", room = "fixture-room-private",
+                     password = "fixture-password-private", incorrect = "fixture-incorrect-private";
+        string folder = Path.Combine(Path.GetTempPath(), "rdr2coop-network-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var log = new NetworkLog(folder);
+            using (var relay = new RelayHost(0, password, _ => { }, room, log.Write))
+            {
+                using (var client = new ServerLink(name, false, password, "127.0.0.1", relay.Port, log.Write, true))
+                    Check(PumpUntil(() => client.State == LinkState.Connected, client), "loopback joins");
+                using (var refused = new ServerLink(name, false, incorrect, "127.0.0.1", relay.Port, log.Write))
+                    Check(PumpUntil(() => refused.State == LinkState.Closed, refused), "bad password refused");
+            }
+            string events = File.ReadAllText(Path.Combine(folder, NetworkLog.FileName));
+            foreach (string field in new[] { "component=relay", "component=client event=joined role=host",
+                                              "event=disconnected reason=closed_locally", "event=connect_rejected reason=wrong_password" })
+                Check(events.Contains(field), "recorded " + field);
+            foreach (string privateValue in new[] { name, room, password, incorrect, "127.0.0.1" })
+                Check(!events.Contains(privateValue), "private values omitted");
+        }
+        finally { Directory.Delete(folder, true); }
     }
 
     static void RelayJoinLogsBuild()

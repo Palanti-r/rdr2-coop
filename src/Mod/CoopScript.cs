@@ -64,6 +64,8 @@ namespace RDR2Coop.Mod
         bool _debugMode;
         string _iniPath, _name = "", _password = "";
         LogSender _logs;   // beta builds: opt-in log uploads (Net/LogShare.cs)
+        NetworkLog _networkLog;
+        bool _networkDebug;
         bool _preferHost;
         // Our own server's settings, kept for "Host your own game here" after joining someone else's.
         int _hostPort;
@@ -137,11 +139,18 @@ namespace RDR2Coop.Mod
 
             Log($"RDR2 Co-op {BuildInfo.Version} (protocol {Protocol.Version}), ScriptHookRDR2DotNet {typeof(Script).Assembly.GetName().Version}, {Environment.OSVersion}");
             try { Start(); }
-            catch (Exception e) { Log("start failed: " + e); _status = "Co-op couldn't start: " + e.Message + " (details in scripts\\RDR2Coop.log)"; }
+            catch (Exception e)
+            {
+                _networkLog?.Write("component=mod event=start_failed " + NetworkLog.ErrorFields(e));
+                Log("start failed: " + e);
+                _status = "Co-op couldn't start: " + e.Message + " (details in scripts\\RDR2Coop.log)";
+            }
         }
 
         void Start()
         {
+            _networkLog = new NetworkLog(Path.GetFullPath("scripts"));
+            _networkLog.Write($"component=mod event=start version={BuildInfo.Version} protocol={Protocol.Version} loader={LogSender.Build}");
             // The game runs .NET with SSL 3 and TLS 1.0 only (seen under Proton; Windows without strong
             // crypto set does the same): GitHub, where updates come from, wants TLS 1.2.
             System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
@@ -153,6 +162,7 @@ namespace RDR2Coop.Mod
             var ini = Ini.Load(iniPath);
             _iniPath = iniPath;
             _debugMode = ini.Get("Testing", "DebugMode", "No").Equals("Yes", StringComparison.OrdinalIgnoreCase);
+            _networkDebug = ini.Get("Testing", "NetworkDebug", "No").Equals("Yes", StringComparison.OrdinalIgnoreCase);
             DebugLog("Debug mode enabled. Settings file: " + iniPath);
             string name = ini.Get("Coop", "Name", Environment.UserName);
             string server = ini.Get("Coop", "Server", "127.0.0.1");
@@ -170,6 +180,8 @@ namespace RDR2Coop.Mod
             bool runServer = ini.Get("Coop", "RunServer", "No").StartsWith("y", StringComparison.OrdinalIgnoreCase);
             _hostPort = runServer ? port : ini.Get("Coop", "HostPort", ServerLink.DefaultPort);
             _hostPassword = runServer ? password : ini.Get("Coop", "HostPassword", "");
+            _networkLog.Write($"component=mod event=settings role={(runServer ? "host" : "guest")} online_list={_listServer.Length > 0} " +
+                              $"list_setting_fallback={listNote != null} public_room={_public} upnp={_upnpOn} verbose={_networkDebug}");
             if (runServer)
             {
                 _builtIn = StartOwnServer(password);
@@ -205,7 +217,7 @@ namespace RDR2Coop.Mod
             _browser = new ServerBrowser(listServer, IsOwnServer, () => _builtIn == null, () => _hostPassword,
                                          () => _link != null && _link.IAmHost ? (_party.IsHosting ? "Mission party: on (switch off)" : "Mission party: off (switch on)") : null,
                                          () => _party.Toggle(_link), _browserKey != Keys.None ? _browserKey : _statusKey,
-                                         () => _updater?.MenuLabel, () => _updater?.Begin());
+                                         () => _updater?.MenuLabel, () => _updater?.Begin(), _networkLog.Write);
             if (_debugMode)
                 DebugLog($"Status key: {_statusKey}. Menu shortcut: {(_browserKey == Keys.None ? _statusKey + " twice within 3 seconds" : _browserKey.ToString())}.");
             _spectate.Key = _teleportKey; ServerBrowser.Extras.Add(new MenuExtra(() => _spectate.MenuLabel, () => _spectate.MenuAct(), help: () => "Watch a partner through their camera while you're down or dead."));
@@ -288,6 +300,7 @@ namespace RDR2Coop.Mod
                                               ini.Get("Testing", "RecordAllScripts", "No").Trim().Equals("Yes", StringComparison.OrdinalIgnoreCase));
             _preferHost = preferHost;
             _password = password;
+            string joinSource = runServer ? "local_host" : "settings";
             if (!runServer && !Resolves(server))
             {
                 // Server= isn't an address (often the room's name, as the browser shows it): stay on, not connected,
@@ -296,17 +309,24 @@ namespace RDR2Coop.Mod
                 _status = $"Co-op: no server '{(server.Length > 20 ? server.Substring(0, 20) : server)}'. Looking for a game called that...";
                 Say(_status);
                 string wanted = server;
+                _roomByNameWanted = wanted;
+                _networkLog.Write("component=discovery event=room_lookup_started reason=address_unresolved");
                 System.Threading.Tasks.Task.Run(() =>
                 {
                     var rooms = new List<Room>();
-                    try { rooms.AddRange(RoomList.QueryLan(ServerLink.DefaultPort)); } catch (Exception e) { Log("room by name, home network: " + e.Message); }
-                    try { if (_listServer != null) rooms.AddRange(RoomList.FetchOnline(_listServer)); } catch (Exception e) { Log("room by name, online list: " + e.Message); }
+                    try { rooms.AddRange(RoomList.QueryLan(ServerLink.DefaultPort, networkLog: _networkLog.Write)); }
+                    catch (Exception e)
+                    {
+                        _networkLog.Write("component=discovery event=lan_scan_failed " + NetworkLog.ErrorFields(e));
+                        Log("room by name, home network: " + e.Message);
+                    }
+                    try { if (_listServer.Length > 0) rooms.AddRange(RoomList.FetchOnline(_listServer, _networkLog.Write)); } catch (Exception e) { Log("room by name, online list: " + e.Message); }
                     _roomByName = RoomList.FindByName(rooms, wanted) ?? new Room { Name = null };
-                    _roomByNameWanted = wanted;
                 });
                 server = "127.0.0.1";
+                joinSource = "local_fallback";
             }
-            Connect(server, port, password);
+            Connect(server, port, password, joinSource);
         }
 
         volatile Room _roomByName;   // the room Server= named (Name null: none found), set by the lookup above
@@ -317,10 +337,15 @@ namespace RDR2Coop.Mod
 #endif
         long _byNameNoteMs;
 
-        static bool Resolves(string host)
+        bool Resolves(string host)
         {
             if (System.Net.IPAddress.TryParse(host, out _)) return true;
-            try { return System.Net.Dns.GetHostAddresses(host).Length > 0; } catch (Exception) { return false; }
+            try { return System.Net.Dns.GetHostAddresses(host).Length > 0; }
+            catch (Exception e)
+            {
+                _networkLog.Write("component=discovery event=configured_address_lookup_failed " + NetworkLog.ErrorFields(e));
+                return false;
+            }
         }
 
         // The tick side of the lookup: join the room it found, or say how to pick one.
@@ -329,6 +354,7 @@ namespace RDR2Coop.Mod
             var room = _roomByName;
             if (room == null) return;
             _roomByName = null;
+            _networkLog.Write("component=discovery event=room_lookup_finished found=" + (room.Name != null));
             if (room.Name == null)
             {
                 Log($"no room called '{_roomByNameWanted}' found");
@@ -338,12 +364,14 @@ namespace RDR2Coop.Mod
                 return;
             }
             Log($"Server= named the room '{room.Name}': joining it");
-            SwitchTo(room, _password);
+            SwitchTo(room, _password, "room_lookup");
         }
 
-        void Connect(string server, int port, string password)
+        void Connect(string server, int port, string password, string source)
         {
-            _link = new ServerLink(_name, _preferHost, password, server, port) { Build = BuildInfo.Version + " " + LogSender.Build };
+            _networkLog.Write($"component=mod event=join_requested source={source} udp_port={port} password_configured={!string.IsNullOrEmpty(password)}");
+            _link = new ServerLink(_name, _preferHost, password, server, port, _networkLog.Write, _networkDebug)
+                { Build = BuildInfo.Version + " " + LogSender.Build };
 
             _link.Joined += () =>
             {
@@ -469,7 +497,8 @@ namespace RDR2Coop.Mod
         // choice is saved, so the next start goes straight back there.
         BuiltInServer StartOwnServer(string password)
         {
-            var b = BuiltInServer.Start(_hostPort, password, _upnpOn, _roomName, _public && _listServer.Length > 0 ? _listServer : null, out string why);
+            var b = BuiltInServer.Start(_hostPort, password, _upnpOn, _roomName, _public && _listServer.Length > 0 ? _listServer : null,
+                                        out string why, _networkLog.Write);
             if (why != null) { Log(why); Say(why); }
             return b;
         }
@@ -492,10 +521,10 @@ namespace RDR2Coop.Mod
                                                                        { "Password", password }, { "HostPassword", password }, { "HostPort", _hostPort.ToString() } });
             }
             catch (Exception e) { Log("couldn't save hosting to the settings file: " + e.Message); }
-            Connect("127.0.0.1", _hostPort, password);
+            Connect("127.0.0.1", _hostPort, password, "local_host");
         }
 
-        void SwitchTo(Room room, string password)
+        void SwitchTo(Room room, string password, string source = null)
         {
             if (room.HostHere) { HostOwn(password); return; }
             Log($"browser: joining '{room.Name}' at {room.Address}:{room.Port}");
@@ -512,7 +541,7 @@ namespace RDR2Coop.Mod
                                                                        { "HostPassword", _hostPassword }, { "HostPort", _hostPort.ToString() } });
             }
             catch (Exception e) { Log("couldn't save the room to the settings file: " + e.Message); }
-            Connect(room.Address, room.Port, password);
+            Connect(room.Address, room.Port, password, source ?? (room.Lan ? "lan_browser" : "online_browser"));
         }
 
         bool IsOwnServer(Room r)
@@ -1289,6 +1318,7 @@ namespace RDR2Coop.Mod
             if (_down != null && _down.IsDown) _down.GetUp(null, "co-op stopped");
             _link?.Dispose();
             _builtIn?.Dispose();
+            _networkLog?.Write("component=mod event=stop");
             _updater?.Stop();
             AppDomain.CurrentDomain.SetData("rdr2coop.puppets", null);
             AppDomain.CurrentDomain.SetData("rdr2coop.copies", null);

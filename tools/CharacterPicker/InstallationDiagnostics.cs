@@ -42,6 +42,7 @@ static class InstallationDiagnostics
     const string LegacyLoader = "ScriptHookRDRDotNet.asi";
     const string LegacyDll = "scripts/RDR2Coop.dll";
     const string Settings = "scripts/RDR2Coop.ini";
+    const string NetworkLog = "scripts/RDR2Coop.Network.log";
     const string FxrPath = "RDR2Coop/runtime/host/fxr";
     const string FrameworkPath = "RDR2Coop/runtime/shared/Microsoft.NETCore.App";
     const int LogTailLimit = 64 * 1024;
@@ -191,22 +192,11 @@ static class InstallationDiagnostics
         bool hasCoopLog = false;
         foreach (string log in LogFiles)
         {
-            string path = Under(directory, log);
-            if (!File.Exists(path)) continue;
+            string contents = ReadLog(directory, log, limit);
+            if (contents == null) continue;
             if (log.StartsWith("scripts/", StringComparison.Ordinal)) hasCoopLog = true;
             if (result.Length > 0) result.AppendLine().AppendLine();
-            result.Append(log);
-            try
-            {
-                string modified = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss");
-                result.Append(" (last modified ").Append(modified).AppendLine(")");
-                string tail = ReadTail(path, limit);
-                result.Append(tail.Length == 0 ? "This log is empty." : tail);
-            }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-            {
-                result.AppendLine().Append("This log could not be read. It may have moved or be locked by the game.");
-            }
+            result.Append(contents);
         }
 
         if (result.Length == 0) return "No RDR2 Co-op or ScriptHook logs were found. Start Story Mode to generate them.";
@@ -214,6 +204,30 @@ static class InstallationDiagnostics
             result.Insert(0, "No RDR2 Co-op logs were found. Check the installation if they still do not appear after starting Story Mode."
                 + Environment.NewLine + Environment.NewLine);
         return result.ToString();
+    }
+
+    public static string ReadRecentNetworkLog(string gameDirectory, int maxLines = 80)
+    {
+        return TryDirectory(gameDirectory, out string directory)
+            ? ReadLog(directory, NetworkLog, Math.Max(1, Math.Min(200, maxLines)))
+            : null;
+    }
+
+    static string ReadLog(string directory, string relative, int maxLines)
+    {
+        string path = Under(directory, relative);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            string modified = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss");
+            string tail = ReadTail(path, maxLines);
+            return relative + " (last modified " + modified + ")" + Environment.NewLine
+                + (tail.Length == 0 ? "This log is empty." : tail);
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            return relative + Environment.NewLine + "This log could not be read. It may have moved or be locked by the game.";
+        }
     }
 
     static void CheckRuntime(string directory, List<InstallationFinding> findings)

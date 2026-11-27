@@ -18,6 +18,7 @@ namespace RDR2Coop.Mod
         readonly RelayHost _host;
         readonly int _port;
         readonly string _roomName, _listServer;   // _listServer null: not listed online
+        readonly Action<string> _networkLog;   // the sink is also used by the relay and background worker
         readonly ManualResetEvent _stop = new ManualResetEvent(false);
         volatile Upnp _upnp;
         volatile string _note;
@@ -26,27 +27,51 @@ namespace RDR2Coop.Mod
         public string ListedAs { get; private set; }   // our address in the online list, once listed
         public int Port => _port;
 
-        BuiltInServer(RelayHost host, int port, bool upnp, string roomName, string listServer)
+        BuiltInServer(RelayHost host, int port, bool upnp, string roomName, string listServer, Action<string> networkLog)
         {
             _host = host;
             _port = port;
             _roomName = roomName;
             _listServer = listServer;
+            _networkLog = networkLog;
             Status = $"server '{roomName}' on UDP {port}";
             if (!upnp) Note($"Co-op server running (UDP {port}). UPnP is off: forward UDP {port} to this PC for friends over the internet.");
             if (upnp || listServer != null) new Thread(() => Background(upnp)) { IsBackground = true, Name = "RDR2Coop.ServerNet" }.Start();
         }
 
         // null (and a note saying why) when it can't run.
-        public static BuiltInServer Start(int port, string password, bool upnp, string roomName, string listServer, out string why)
+        public static BuiltInServer Start(int port, string password, bool upnp, string roomName, string listServer, out string why,
+            Action<string> networkLog = null)
         {
             why = null;
-            if (string.IsNullOrEmpty(password)) { why = "Co-op: set a Password in RDR2Coop.ini to run the server"; return null; }
-            try { return new BuiltInServer(new RelayHost(port, password, l => CoopScript.Log("server: " + l), roomName), port, upnp, roomName, listServer); }
+            Action<string> trace = networkLog == null ? null : new Action<string>(line =>
+            {
+                try { networkLog(line); }
+                catch (Exception) { }   // Diagnostics cannot take down the listener or the hosting worker.
+            });
+            if (string.IsNullOrEmpty(password))
+            {
+                trace?.Invoke("component=host event=bind_skipped reason=missing_password");
+                why = "Co-op: set a Password in RDR2Coop.ini to run the server";
+                return null;
+            }
+            trace?.Invoke($"component=host event=bind_start port={port} upnp={(upnp ? "on" : "off")} listing={(listServer != null ? "on" : "off")}");
+            try
+            {
+                var host = new RelayHost(port, password, l => CoopScript.Log("server: " + l), roomName, trace);
+                trace?.Invoke($"component=host event=bind_success port={host.Port}");
+                return new BuiltInServer(host, port, upnp, roomName, listServer, trace);
+            }
             catch (SocketException e)
             {
+                trace?.Invoke($"component=host event=bind_failed port={port} " + NetworkLog.ErrorFields(e));
                 why = $"Co-op: can't run the server, UDP {port} is in use ({e.SocketErrorCode}); joining whatever runs there";
                 return null;
+            }
+            catch (Exception e)
+            {
+                trace?.Invoke($"component=host event=bind_failed port={port} " + NetworkLog.ErrorFields(e));
+                throw;
             }
         }
 
@@ -65,6 +90,7 @@ namespace RDR2Coop.Mod
                 if (upnp) OpenPort();
                 long nextRenew = Environment.TickCount + RenewMs;
                 string lastError = "";
+                bool? announced = null;
                 do
                 {
                     if (_listServer != null && !(_upnp != null && Shared(_upnp.PublicIp)))   // a shared (CGNAT) address can't be joined: not listed (OpenPort said why)
@@ -73,22 +99,37 @@ namespace RDR2Coop.Mod
                         if (listedAs != null) ListedAs = listedAs;
                         if (err != null && err != lastError) Note("Co-op: your room couldn't be listed online: " + err);
                         else if (err == null && lastError != null) CoopScript.Log("listed online as '" + _roomName + "'");
+                        bool success = err == null;
+                        if (announced != success)
+                            _networkLog?.Invoke(success ? "component=host event=announce_success" : "component=host event=announce_failed");
+                        announced = success;
                         lastError = err;
                     }
-                    if (_upnp != null && Environment.TickCount - nextRenew >= 0) { _upnp.Open(_port); nextRenew = Environment.TickCount + RenewMs; }   // keep the lease alive
+                    if (_upnp != null && Environment.TickCount - nextRenew >= 0)
+                    {
+                        string err = _upnp.Open(_port);
+                        _networkLog?.Invoke(err == null ? "component=host event=upnp_renew_success" : "component=host event=upnp_renew_failed");
+                        nextRenew = Environment.TickCount + RenewMs;
+                    }
                 }
                 while (!_stop.WaitOne(_listServer != null ? AnnounceMs : RenewMs));
             }
-            catch (Exception e) { CoopScript.Log("server network: " + e.Message); }
+            catch (Exception e)
+            {
+                CoopScript.Log("server network: " + e.Message);
+                _networkLog?.Invoke("component=host event=worker_failed " + NetworkLog.ErrorFields(e));
+            }
         }
 
         void OpenPort()
         {
+            _networkLog?.Invoke("component=host event=upnp_discovery_start");
             var u = Upnp.Find();
             CoopScript.Log(Upnp.LastSearch);
             if (u == null)
             {
                 Status += ", no UPnP router";
+                _networkLog?.Invoke("component=host event=upnp_discovery_failed reason=no_router");
                 Note($"Co-op server running. No UPnP router answered: forward UDP {_port} to this PC for friends over the internet (same network: they use this PC's address).");
                 return;
             }
@@ -96,6 +137,7 @@ namespace RDR2Coop.Mod
             if (err != null)
             {
                 Status += ", UPnP refused";
+                _networkLog?.Invoke("component=host event=upnp_mapping_failed");
                 Note($"Co-op server running. The router refused to open UDP {_port} ({err}): forward it to {u.LocalIp} by hand.");
                 return;
             }
@@ -103,11 +145,16 @@ namespace RDR2Coop.Mod
             if (Shared(u.PublicIp))
             {
                 Status += $", port open but {u.PublicIp} is shared";
+                _networkLog?.Invoke("component=host event=upnp_mapping_success address_scope=shared_or_private");
+                if (_listServer != null) _networkLog?.Invoke("component=host event=announce_skipped reason=shared_or_private");
                 Note($"Co-op server running, but your internet address ({u.PublicIp}) is shared by your provider (CGNAT), so friends can't reach it and it isn't listed online. Start a free dedicated server in the Discord's #find-a-partner, or use Tailscale or ZeroTier.");
             }
             else
             {
                 Status += $", friends join {u.PublicIp}:{_port}";
+                _networkLog?.Invoke(IPAddress.TryParse(u.PublicIp, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork
+                    ? "component=host event=upnp_mapping_success address_scope=external"
+                    : "component=host event=upnp_mapping_success address_scope=unknown");
                 Note($"Co-op server open to the internet: friends join {u.PublicIp} port {_port}");
             }
         }
@@ -123,6 +170,7 @@ namespace RDR2Coop.Mod
         {
             _stop.Set();
             _host.Dispose();
+            _networkLog?.Invoke("component=host event=listener_stopped");
             try { _upnp?.Close(_port); } catch (Exception) { }
             if (_listServer != null) RoomList.Remove(_listServer, _port);
         }

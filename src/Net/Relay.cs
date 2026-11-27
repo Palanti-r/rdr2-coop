@@ -39,21 +39,23 @@ namespace RDR2Coop.Net
         readonly string _roomName;
         readonly byte[] _key;
         readonly Func<double> _clock;
-        readonly Action<string> _log;
+        readonly Action<string> _log, _networkLog;
         readonly Dictionary<IPEndPoint, Player> _players = new Dictionary<IPEndPoint, Player>();
         readonly Dictionary<IPEndPoint, (byte[] nonce, bool preferHost, string name, string build, double expires)> _pending =
             new Dictionary<IPEndPoint, (byte[], bool, string, string, double)>();
         readonly Dictionary<IPAddress, List<double>> _helloTimes = new Dictionary<IPAddress, List<double>>();
+        readonly Dictionary<string, double> _lastRejectionLog = new Dictionary<string, double>();
         readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
         double _lastSweep;
         (IPAddress ip, double until) _lostHost;   // the last host dropped while preferring the role
 
-        public Relay(string password, Func<double> clock, Action<string> log, string roomName = null)
+        public Relay(string password, Func<double> clock, Action<string> log, string roomName = null, Action<string> networkLog = null)
         {
             _roomName = string.IsNullOrWhiteSpace(roomName) ? "RDR2 Co-op server" : roomName;
             _key = Encoding.UTF8.GetBytes(password ?? "");
             _clock = clock;
             _log = log ?? (_ => { });
+            _networkLog = networkLog;
         }
 
         public int PlayerCount => _players.Count;
@@ -97,6 +99,14 @@ namespace RDR2Coop.Net
         static List<(byte[], IPEndPoint)> Reject(IPEndPoint addr, string reason) =>
             new List<(byte[], IPEndPoint)> { (Cat(Header(PacketType.Reject, 0, 0), ShortString(reason)), addr) };
 
+        // Reasons come from fixed call sites. Bound disk writes when unauthenticated traffic is heavy.
+        void LogRejection(string reason, double now)
+        {
+            if (_networkLog == null || (_lastRejectionLog.TryGetValue(reason, out double last) && now - last < 5.0)) return;
+            _lastRejectionLog[reason] = now;
+            _networkLog("component=relay event=login_rejected reason=" + reason);
+        }
+
         static readonly List<(byte[], IPEndPoint)> None = new List<(byte[], IPEndPoint)>();
 
         bool RateLimited(IPAddress ip, double now)
@@ -131,7 +141,7 @@ namespace RDR2Coop.Net
 
             player.LastHeard = now;
             if (type == PacketType.Hello) return new List<(byte[], IPEndPoint)> { (Welcome(player), addr) };   // our Welcome was lost
-            if (type == PacketType.Bye) return Drop(player, "left");
+            if (type == PacketType.Bye) return Drop(player, timedOut: false);
             switch (type)
             {
                 case PacketType.State: case PacketType.World: case PacketType.Party: case PacketType.Appearance:
@@ -163,7 +173,11 @@ namespace RDR2Coop.Net
             int b = 13 + n;
             if (b < data.Length && b + 1 + data[b] <= data.Length)
                 build = new string(Encoding.UTF8.GetString(data, b + 1, data[b]).Where(c => !char.IsControl(c)).Take(32).ToArray());
-            if (version != Protocol.Version) return Reject(addr, $"version mismatch: server {Protocol.Version}, you {version}");
+            if (version != Protocol.Version)
+            {
+                LogRejection("protocol_version_mismatch", now);
+                return Reject(addr, $"version mismatch: server {Protocol.Version}, you {version}");
+            }
             // A repeated Hello (its Challenge lost or late) gets the same challenge, so whichever Auth arrives is right.
             byte[] nonce;
             if (_pending.TryGetValue(addr, out var had) && now <= had.expires) nonce = had.nonce;
@@ -184,19 +198,30 @@ namespace RDR2Coop.Net
             if (diff != 0)
             {
                 _log("wrong password from " + addr.Address);
+                LogRejection("authentication_failed", now);
                 return Reject(addr, "wrong password");
             }
-            if (_players.Count >= MaxPlayers) return Reject(addr, "server full (4 players)");
+            if (_players.Count >= MaxPlayers)
+            {
+                LogRejection("room_full", now);
+                return Reject(addr, "server full (4 players)");
+            }
             // The player set up as the host (PreferHost=Yes) gets the role back when it rejoins soon after
             // being dropped (a dead link, a suspended machine); the stand-in host hands it over. Not on a
             // first join: a PreferHost player joining someone else's room stays a guest.
             var host = HostPlayer();
             bool takeHost = host == null || (pend.preferHost && !host.PreferHost && addr.Address.Equals(_lostHost.ip) && now <= _lostHost.until);
-            if (takeHost && host != null) { host.Role = Guest; _log($"{host.Name} (id {host.Id}) hands the host role back to {pend.name}"); }
+            if (takeHost && host != null)
+            {
+                host.Role = Guest;
+                _log($"{host.Name} (id {host.Id}) hands the host role back to {pend.name}");
+                _networkLog?.Invoke("component=relay event=host_role_changed reason=returning_host");
+            }
             var p = new Player { Id = FreeId(), Addr = addr, Name = pend.name, Role = takeHost ? Host : Guest,
                                  PreferHost = pend.preferHost, Build = pend.build, LastHeard = now };
             _players[addr] = p;
             _log($"{p.Name} joined as {(p.Role == Host ? "host" : "guest")} (id {p.Id}) from {addr.Address}" + (p.Build.Length > 0 ? $", mod {p.Build}" : ", mod older than 0.9.0-beta.7"));
+            _networkLog?.Invoke($"component=relay event=peer_joined role={(p.Role == Host ? "host" : "guest")} players={_players.Count} capacity={MaxPlayers}");
             var output = new List<(byte[], IPEndPoint)> { (Welcome(p), addr) };
             output.AddRange(ToAll(RosterPacket()));
             return output;
@@ -212,10 +237,11 @@ namespace RDR2Coop.Net
             return Cat(Header(PacketType.Welcome, 0, p.Id), BitConverter.GetBytes(Protocol.Version), new[] { p.Id, h?.Id ?? (byte)0 });
         }
 
-        List<(byte[], IPEndPoint)> Drop(Player player, string why)
+        List<(byte[], IPEndPoint)> Drop(Player player, bool timedOut)
         {
             _players.Remove(player.Addr);
-            _log($"{player.Name} (id {player.Id}) {why}");
+            _log($"{player.Name} (id {player.Id}) {(timedOut ? "timed out" : "left")}");
+            _networkLog?.Invoke($"component=relay event=peer_disconnected role={(player.Role == Host ? "host" : "guest")} reason={(timedOut ? "timeout" : "left")} players={_players.Count} capacity={MaxPlayers}");
             if (player.Role == Host && player.PreferHost) _lostHost = (player.Addr.Address, _clock() + LostHostS);
             if (player.Role == Host && _players.Count > 0)
             {
@@ -223,6 +249,7 @@ namespace RDR2Coop.Net
                 var next = _players.Values.OrderBy(p => p.PreferHost ? 0 : 1).ThenBy(p => p.Id).First();
                 next.Role = Host;
                 _log($"{next.Name} (id {next.Id}) is now the host");
+                _networkLog?.Invoke("component=relay event=host_role_changed reason=previous_host_disconnected");
             }
             return ToAll(RosterPacket());
         }
@@ -236,7 +263,7 @@ namespace RDR2Coop.Net
                 _helloTimes.Remove(ip);
             var output = new List<(byte[], IPEndPoint)>();
             foreach (var p in _players.Values.Where(p => now - p.LastHeard > TimeoutS).ToList())
-                output.AddRange(Drop(p, "timed out"));
+                output.AddRange(Drop(p, timedOut: true));
             foreach (var a in _pending.Where(kv => now > kv.Value.expires).Select(kv => kv.Key).ToList())
                 _pending.Remove(a);
             return output;
@@ -254,10 +281,10 @@ namespace RDR2Coop.Net
         public int PlayerCount => _relay.PlayerCount;
 
         // Throws SocketException when the port is taken.
-        public RelayHost(int port, string password, Action<string> log, string roomName = null)
+        public RelayHost(int port, string password, Action<string> log, string roomName = null, Action<string> networkLog = null)
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            _relay = new Relay(password, () => clock.Elapsed.TotalSeconds, log, roomName);
+            _relay = new Relay(password, () => clock.Elapsed.TotalSeconds, log, roomName, networkLog);
             _udp = new UdpClient(new IPEndPoint(IPAddress.Any, port)) { Client = { ReceiveTimeout = 1000 } };
             ServerLink.IgnoreConnectionResets(_udp);
             Port = ((IPEndPoint)_udp.Client.LocalEndPoint).Port;

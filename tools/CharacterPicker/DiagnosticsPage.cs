@@ -14,6 +14,8 @@ sealed class DiagnosticsPage : TabPage
     readonly Button _refresh = new Button { Text = "Check files and logs", AutoSize = true, Enabled = false };
     readonly Button _debug = new Button { Text = "Enable debug logging", AutoSize = true, Enabled = false };
     readonly Button _copy = new Button { Text = "Copy report", AutoSize = true, Enabled = false };
+    readonly Button _networkDebug = new Button { Text = "Enable detailed network logging", AutoSize = true, Enabled = false };
+    readonly Button _copyNetwork = new Button { Text = "Copy network log", AutoSize = true, Enabled = false };
     readonly DataGridView _files = new DataGridView
     {
         Dock = DockStyle.Fill,
@@ -30,6 +32,11 @@ sealed class DiagnosticsPage : TabPage
     {
         Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, WordWrap = false,
         ScrollBars = ScrollBars.Both, AccessibleName = "Recent RDR2 logs",
+    };
+    readonly TextBox _networkLog = new TextBox
+    {
+        Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, WordWrap = false,
+        ScrollBars = ScrollBars.Both, AccessibleName = "Recent RDR2 Co-op network log",
     };
     string _gameDirectory, _iniPath, _reportText;
     int _refreshId;
@@ -52,8 +59,12 @@ sealed class DiagnosticsPage : TabPage
             }
         };
         _refresh.Click += async (_, __) => await RefreshReport();
-        _debug.Click += (_, __) => ToggleDebug();
-        _copy.Click += (_, __) => CopyReport();
+        _debug.Click += (_, __) => ToggleDebug(_debug, "DebugMode", "debug logging",
+            "Restart RDR2, try the menu shortcut, then check the recent logs here.");
+        _copy.Click += (_, __) => CopyText(_reportText, "Report copied.");
+        _networkDebug.Click += (_, __) => ToggleDebug(_networkDebug, "NetworkDebug", "detailed network logging",
+            "Restart RDR2, try the connection again, then refresh the network log here.");
+        _copyNetwork.Click += (_, __) => CopyText(_networkLog.Text, "Network log copied.");
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
         toolbar.Controls.AddRange(new Control[] { _refresh, _debug, _copy });
@@ -65,8 +76,14 @@ sealed class DiagnosticsPage : TabPage
         files.Controls.Add(_files);
         var logs = new TabPage("Recent logs");
         logs.Controls.Add(_logs);
+        var network = new TabPage("Network log");
+        var networkTools = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
+        networkTools.Controls.AddRange(new Control[] { _networkDebug, _copyNetwork });
+        network.Controls.Add(_networkLog);
+        network.Controls.Add(networkTools);
         details.TabPages.Add(files);
         details.TabPages.Add(logs);
+        details.TabPages.Add(network);
 
         layout.Controls.Add(_folder, 0, 0);
         layout.Controls.Add(choose, 1, 0);
@@ -88,13 +105,19 @@ sealed class DiagnosticsPage : TabPage
         _folder.Text = gameDirectory;
         _files.Rows.Clear();
         _logs.Clear();
+        _networkLog.Clear();
         _reportText = null;
         _copy.Enabled = false;
+        _copyNetwork.Enabled = false;
         _refresh.Enabled = true;
-        _debug.Enabled = iniPath != null;
+        _debug.Enabled = _networkDebug.Enabled = iniPath != null;
         _summary.Text = "Check the files and logs for this game folder.";
-        if (_debug.Enabled) SetDebugLabel();
-        else _debug.Text = "Enable debug logging";
+        if (_debug.Enabled) SetDebugLabels();
+        else
+        {
+            _debug.Text = "Enable debug logging";
+            _networkDebug.Text = "Enable detailed network logging";
+        }
     }
 
     public async Task RefreshReport()
@@ -104,6 +127,7 @@ sealed class DiagnosticsPage : TabPage
         int request = ++_refreshId;
         _refresh.Enabled = false;
         _copy.Enabled = false;
+        _copyNetwork.Enabled = false;
         _summary.Text = "Checking the installation and reading logs…";
         try
         {
@@ -111,10 +135,11 @@ sealed class DiagnosticsPage : TabPage
             {
                 Report = InstallationDiagnostics.Check(directory),
                 Logs = InstallationDiagnostics.ReadRecentLog(directory),
+                NetworkLog = InstallationDiagnostics.ReadRecentNetworkLog(directory),
             });
             if (request != _refreshId || IsDisposed) return;
-            ShowReport(result.Report, result.Logs);
-            if (_debug.Enabled) SetDebugLabel();
+            ShowReport(result.Report, result.Logs, result.NetworkLog);
+            if (_debug.Enabled) SetDebugLabels();
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
         {
@@ -126,7 +151,7 @@ sealed class DiagnosticsPage : TabPage
         }
     }
 
-    void ShowReport(InstallationReport report, string logs)
+    void ShowReport(InstallationReport report, string logs, string networkLog)
     {
         _files.Rows.Clear();
         var reportText = new StringBuilder().AppendLine("Game folder: " + report.GameDirectory).AppendLine("Loader: " + report.Loader);
@@ -141,51 +166,60 @@ sealed class DiagnosticsPage : TabPage
         int warnings = report.Findings.Count(finding => finding.Severity == InstallationSeverity.Warning);
         _summary.Text = $"{report.Loader} loader · {errors} errors · {warnings} warnings";
         _logs.Text = logs;
-        _reportText = reportText.AppendLine().Append(logs).ToString();
+        _networkLog.Text = networkLog ?? "No network log found. Start RDR2, load Story Mode, and click Check files and logs again.";
+        reportText.AppendLine().Append(logs);
+        if (networkLog != null) reportText.AppendLine().AppendLine().Append(networkLog);
+        _reportText = reportText.ToString();
         _copy.Enabled = true;
+        _copyNetwork.Enabled = networkLog != null;
     }
 
-    bool DebugEnabled() => Ini.Load(_iniPath).Get("Testing", "DebugMode", "No").Equals("Yes", StringComparison.OrdinalIgnoreCase);
+    static bool DebugEnabled(Ini ini, string key) => ini.Get("Testing", key, "No").Equals("Yes", StringComparison.OrdinalIgnoreCase);
 
-    void SetDebugLabel()
+    static string DebugLabel(bool enabled, string name) => (enabled ? "Disable " : "Enable ") + name;
+
+    void SetDebugLabels()
     {
-        try { _debug.Text = DebugEnabled() ? "Disable debug logging" : "Enable debug logging"; }
+        try
+        {
+            var ini = Ini.Load(_iniPath);
+            _debug.Text = DebugLabel(DebugEnabled(ini, "DebugMode"), "debug logging");
+            _networkDebug.Text = DebugLabel(DebugEnabled(ini, "NetworkDebug"), "detailed network logging");
+        }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
         {
             _summary.Text = "Could not read debug settings. " + ex.Message;
         }
     }
 
-    void ToggleDebug()
+    void ToggleDebug(Button button, string key, string name, string enabledMessage)
     {
         if (_iniPath == null) return;
         try
         {
             if (!File.Exists(_iniPath)) throw new FileNotFoundException("The installed RDR2Coop.ini is missing.");
-            bool enabled = !DebugEnabled();
-            Ini.Set(_iniPath, "Testing", new Dictionary<string, string> { ["DebugMode"] = enabled ? "Yes" : "No" });
-            _debug.Text = enabled ? "Disable debug logging" : "Enable debug logging";
-            _summary.Text = enabled
-                ? "Restart RDR2, try the menu shortcut, then check the recent logs here."
-                : "Debug logging is off. Restart RDR2 to apply.";
+            bool enabled = !DebugEnabled(Ini.Load(_iniPath), key);
+            Ini.Set(_iniPath, "Testing", new Dictionary<string, string> { [key] = enabled ? "Yes" : "No" });
+            button.Text = DebugLabel(enabled, name);
+            _summary.Text = enabled ? enabledMessage : "The setting is off. Restart RDR2 to apply.";
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
         {
-            _summary.Text = "Could not change debug logging. " + ex.Message;
+            _summary.Text = "Could not change " + name + ". " + ex.Message;
         }
     }
 
-    void CopyReport()
+    void CopyText(string text, string confirmation)
     {
-        if (_reportText == null) return;
+        if (string.IsNullOrEmpty(text)) return;
         try
         {
-            Clipboard.SetText(_reportText);
-            _summary.Text = "Report copied.";
+            Clipboard.SetText(text);
+            _summary.Text = confirmation;
         }
         catch (System.Runtime.InteropServices.ExternalException ex)
         {
-            _summary.Text = "Could not copy the report. " + ex.Message;
+            _summary.Text = "Could not copy the text. " + ex.Message;
         }
     }
 }

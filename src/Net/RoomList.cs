@@ -4,6 +4,7 @@
 // Everything here blocks: call it from a background thread.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -85,15 +86,18 @@ namespace RDR2Coop.Net
             return t.Length > max ? t.Substring(0, max) : t;
         }
 
-        public static List<Room> QueryLan(int port, int waitMs = 800)
+        public static List<Room> QueryLan(int port, int waitMs = 800, Action<string> networkLog = null)
         {
+            var watch = networkLog != null ? Stopwatch.StartNew() : null;
             var found = new List<Room>();
             using (var udp = new UdpClient(0) { EnableBroadcast = true })
             {
                 ServerLink.IgnoreConnectionResets(udp);
                 var query = Relay.QueryMagic.Concat(new byte[Relay.QuerySize - Relay.QueryMagic.Length]).ToArray();
-                try { udp.Send(query, query.Length, new IPEndPoint(IPAddress.Broadcast, port)); } catch (SocketException) { }
-                try { udp.Send(query, query.Length, new IPEndPoint(IPAddress.Loopback, port)); } catch (SocketException) { }   // a server on this PC
+                try { udp.Send(query, query.Length, new IPEndPoint(IPAddress.Broadcast, port)); }
+                catch (SocketException e) { networkLog?.Invoke($"component=discovery event=lan_send_failed target=broadcast socket_error={e.SocketErrorCode}"); }
+                try { udp.Send(query, query.Length, new IPEndPoint(IPAddress.Loopback, port)); }   // a server on this PC
+                catch (SocketException e) { networkLog?.Invoke($"component=discovery event=lan_send_failed target=loopback socket_error={e.SocketErrorCode}"); }
                 var until = DateTime.UtcNow.AddMilliseconds(waitMs);
                 while (DateTime.UtcNow < until)
                 {
@@ -108,9 +112,15 @@ namespace RDR2Coop.Net
                         if (!found.Any(r => r.Port == room.Port && r.Name == room.Name && r.Players == room.Players))   // the same server via loopback and the LAN
                             found.Add(room);
                     }
-                    catch (SocketException) { break; }
+                    catch (SocketException e)
+                    {
+                        if (e.SocketErrorCode != SocketError.TimedOut && e.SocketErrorCode != SocketError.WouldBlock)
+                            networkLog?.Invoke($"component=discovery event=lan_receive_failed socket_error={e.SocketErrorCode}");
+                        break;
+                    }
                 }
             }
+            networkLog?.Invoke($"component=discovery event=lan_scan_finished udp_port={port} rooms={found.Count} elapsed_ms={watch.ElapsedMilliseconds}");
             return found;
         }
 
@@ -132,13 +142,26 @@ namespace RDR2Coop.Net
         }
 
         // The online list; throws on network errors (the browser says so).
-        public static List<Room> FetchOnline(string listServer)
+        public static List<Room> FetchOnline(string listServer, Action<string> networkLog = null)
         {
-            var req = (HttpWebRequest)WebRequest.Create(listServer.TrimEnd('/') + "/v1/rooms");
-            req.Timeout = req.ReadWriteTimeout = 5000;
-            using (var resp = req.GetResponse())
-            using (var s = resp.GetResponseStream())
-                return ReadRooms(s);
+            var watch = networkLog != null ? Stopwatch.StartNew() : null;
+            try
+            {
+                var req = (HttpWebRequest)WebRequest.Create(listServer.TrimEnd('/') + "/v1/rooms");
+                req.Timeout = req.ReadWriteTimeout = 5000;
+                using (var resp = req.GetResponse())
+                using (var s = resp.GetResponseStream())
+                {
+                    var rooms = ReadRooms(s);
+                    networkLog?.Invoke($"component=discovery event=online_list_finished rooms={rooms.Count} elapsed_ms={watch.ElapsedMilliseconds}");
+                    return rooms;
+                }
+            }
+            catch (Exception e)
+            {
+                networkLog?.Invoke($"component=discovery event=online_list_failed elapsed_ms={watch.ElapsedMilliseconds} " + NetworkLog.ErrorFields(e));
+                throw;
+            }
         }
 
         // List (or refresh) a room; null when done (listedAs: the address the

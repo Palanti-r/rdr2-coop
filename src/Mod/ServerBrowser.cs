@@ -49,6 +49,7 @@ namespace RDR2Coop.Mod
         readonly Action _update;
         readonly Action _toggleParty;
         readonly Keys _closeKey;
+        readonly Action<string> _networkLog;
         Mode _mode;
         volatile List<Room> _rooms;
         volatile string _message;
@@ -59,13 +60,15 @@ namespace RDR2Coop.Mod
         long _keyboardSince;
 
         public ServerBrowser(string listServer, Func<Room, bool> isOwn, Func<bool> canHost, Func<string> hostPassword,
-                             Func<string> partyLabel, Action toggleParty, Keys closeKey, Func<string> updateLabel, Action update)
+                             Func<string> partyLabel, Action toggleParty, Keys closeKey, Func<string> updateLabel, Action update,
+                             Action<string> networkLog)
         {
             _partyLabel = partyLabel;
             _updateLabel = updateLabel;
             _update = update;
             _toggleParty = toggleParty;
             _closeKey = closeKey;
+            _networkLog = networkLog;
             _listServer = listServer ?? "";
             _isOwn = isOwn;
             _canHost = canHost;
@@ -111,10 +114,15 @@ namespace RDR2Coop.Mod
             {
                 var rooms = new List<Room>();
                 string note = null;
-                try { rooms.AddRange(RoomList.QueryLan(ServerLink.DefaultPort)); } catch (Exception e) { CoopScript.Log("browser LAN: " + e.Message); }
+                try { rooms.AddRange(RoomList.QueryLan(ServerLink.DefaultPort, networkLog: _networkLog)); }
+                catch (Exception e)
+                {
+                    _networkLog("component=discovery event=lan_scan_failed " + NetworkLog.ErrorFields(e));
+                    CoopScript.Log("browser LAN: " + e.Message);
+                }
                 if (_listServer.Length > 0)
                 {
-                    try { rooms.AddRange(RoomList.FetchOnline(_listServer).Where(r => r != null)); }
+                    try { rooms.AddRange(RoomList.FetchOnline(_listServer, _networkLog).Where(r => r != null)); }
                     catch (Exception e) { note = "Online list unavailable: " + e.Message; CoopScript.Log("browser online: " + e.Message); }
                 }
                 else note = "Online list is off (ListServer= in RDR2Coop.ini).";
@@ -148,8 +156,18 @@ namespace RDR2Coop.Mod
                     if (room.Party) { Close(); _toggleParty(); return true; }
                     if (room.Extra >= 0) { Close(); if (room.Extra < Extras.Count) Extras[room.Extra].Act(); return true; }
                     if (room.Update) { _update(); return true; }
-                    if (!room.HostHere && room.Version != Protocol.Version) { _message = $"'{room.Name}' runs another co-op version (protocol {room.Version}, yours {Protocol.Version})."; return true; }
-                    if (!room.HostHere && room.Players >= room.Max) { _message = $"'{room.Name}' is full."; return true; }
+                    if (!room.HostHere && room.Version != Protocol.Version)
+                    {
+                        _networkLog($"component=browser event=join_blocked reason=protocol_mismatch room_protocol={room.Version}");
+                        _message = $"'{room.Name}' runs another co-op version (protocol {room.Version}, yours {Protocol.Version}).";
+                        return true;
+                    }
+                    if (!room.HostHere && room.Players >= room.Max)
+                    {
+                        _networkLog("component=browser event=join_blocked reason=room_full");
+                        _message = $"'{room.Name}' is full.";
+                        return true;
+                    }
                     _picked = room;
                     _mode = Mode.Password;
                     _keyboardSince = Environment.TickCount;
