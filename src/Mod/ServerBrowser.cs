@@ -34,7 +34,7 @@ namespace RDR2Coop.Mod
         public static Func<string> Status;   // one line under the title: connected or not, who's here, whose world this is
         const string Session = "Session", Games = "Games";
 
-        enum Mode { Closed, List, Password, Search }
+        enum Mode { Closed, List, Password, Search, Debug }
         const int Rows = 12;
         const int KeyboardPassword = 2;   // KTEXTTYPE_PASSWORD
         const int KeyboardText = 0;       // KTEXTTYPE_DEFAULT
@@ -54,6 +54,50 @@ namespace RDR2Coop.Mod
         volatile List<Room> _rooms;
         volatile string _message;
         int _selected;
+        NetworkLog _debugLog;
+        Func<string> _debugStatus;
+        string[] _debugLines = new string[0];
+        int _debugOffset, _debugRefresh;
+        string _debugMessage;
+        public void OpenDebug(NetworkLog log, Func<string> status)
+        {
+            _debugLog = log;
+            _debugStatus = status;
+            _debugOffset = 0;
+            _debugMessage = null;
+            _debugLines = log.Recent();
+            _debugRefresh = Environment.TickCount;
+            _mode = Mode.Debug;
+        }
+
+        void DrawDebug()
+        {
+            if (unchecked(Environment.TickCount - _debugRefresh) >= 1000)
+            {
+                _debugLines = _debugLog.Recent();
+                _debugRefresh = Environment.TickCount;
+            }
+            Ui.Centered(true);
+            try
+            {
+                Frame(H, false);
+                Ui.TextAt("Debug Logging", X0 + Pad, Y0 + 65f, 0.48f, Cream, Ui.TitleFont);
+                Ui.TextAt(_debugStatus(), X0 + Pad, Y0 + 108f, 0.32f, Text, Ui.BodyFont);
+                int end = Math.Max(0, _debugLines.Length - _debugOffset);
+                int start = Math.Max(0, end - 10);
+                for (int i = start; i < end; i++)
+                {
+                    string line = _debugLines[i];
+                    if (line.Length > 125) line = line.Substring(0, 122) + "...";
+                    Ui.TextAt(line, X0 + Pad, Y0 + 155f + (i - start) * 30f, 0.26f, Text, Ui.BodyFont);
+                }
+                Ui.Box(X0 + Pad, Y0 + 480f, 210f, 36f, Red);
+                Ui.TextAt("Save logs (Enter)", X0 + Pad + 10f, Y0 + 484f, 0.34f, Cream, Ui.BodyFont);
+                Ui.TextAt(_debugMessage ?? "Up/Down: scroll | Esc: back", X0 + Pad, Y0 + 535f, 0.30f, Dim, Ui.BodyFont);
+            }
+            finally { Ui.Centered(false); }
+        }
+
         int _tab;   // index into Tabs
         string _filter = "";
         Room _picked;
@@ -135,6 +179,20 @@ namespace RDR2Coop.Mod
         // True when the key was for the browser (the game shouldn't act on it).
         public bool OnKey(Keys key)
         {
+            if (_mode == Mode.Debug)
+            {
+                switch (key)
+                {
+                    case Keys.Escape: _mode = Mode.List; break;
+                    case Keys.Up: _debugOffset = Math.Min(Math.Max(0, _debugLines.Length - 10), _debugOffset + 1); break;
+                    case Keys.Down: _debugOffset = Math.Max(0, _debugOffset - 1); break;
+                    case Keys.Enter:
+                        try { _debugMessage = "Saved: " + _debugLog.Save(_debugStatus()); }
+                        catch (Exception e) { _debugMessage = "Save failed: " + e.GetType().Name; }
+                        break;
+                }
+                return true;
+            }
             if (_mode != Mode.List) return _mode == Mode.Password || _mode == Mode.Search;
             var rooms = Shown();
             switch (key)
@@ -182,6 +240,12 @@ namespace RDR2Coop.Mod
         public Room Tick(string fallbackPassword, out string password)
         {
             password = null;
+            if (_mode == Mode.Debug)
+            {
+                PAD.DISABLE_ALL_CONTROL_ACTIONS(0);
+                DrawDebug();
+                return null;
+            }
             if (_mode == Mode.List)
             {
                 PAD.DISABLE_ALL_CONTROL_ACTIONS(0);
