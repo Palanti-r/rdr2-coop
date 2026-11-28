@@ -45,6 +45,33 @@ namespace RDR2Coop.Net
             catch (SecurityException) { }
         }
 
+        public string[] Recent()
+        {
+            lock (Gate)
+            {
+                try { return File.Exists(_path) ? File.ReadAllLines(_path) : new string[0]; }
+                catch (IOException) { return new string[0]; }
+                catch (UnauthorizedAccessException) { return new string[0]; }
+            }
+        }
+
+        public string Save(string status)
+        {
+            lock (Gate)
+            {
+                string root = Path.GetDirectoryName(_directory);
+                string name = "RDR2Coop.Debug_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + ".log";
+                string previous = _path + ".previous";
+                using (var writer = new StreamWriter(Path.Combine(root, name)))
+                {
+                    writer.WriteLine(status);
+                    if (File.Exists(previous)) writer.Write(File.ReadAllText(previous));
+                    if (File.Exists(_path)) writer.Write(File.ReadAllText(_path));
+                }
+                return name;
+            }
+        }
+
         public static string ErrorFields(Exception error)
         {
             if (error is SocketException socket) return "socket_error=" + socket.SocketErrorCode;
