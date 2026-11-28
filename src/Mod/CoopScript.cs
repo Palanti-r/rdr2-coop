@@ -220,6 +220,10 @@ namespace RDR2Coop.Mod
                                          () => _updater?.MenuLabel, () => _updater?.Begin(), _networkLog.Write);
             if (_debugMode)
                 DebugLog($"Status key: {_statusKey}. Menu shortcut: {(_browserKey == Keys.None ? _statusKey + " twice within 3 seconds" : _browserKey.ToString())}.");
+            ServerBrowser.Extras.Add(new MenuExtra(() => "Debug Logging",
+                () => _browser.OpenDebug(_networkLog, () => _link == null ? "Not connected" :
+                    $"Connection: {_link.State} | Role: {(_link.IAmHost ? "Host" : "Guest")} | Ping (relay): {(_link.PingMs < 0 ? "N/A" : _link.PingMs + " ms")} | Verbose: {_networkDebug}"),
+                MenuExtra.More, () => "View network events and save a local diagnostic report."));
             _spectate.Key = _teleportKey; ServerBrowser.Extras.Add(new MenuExtra(() => _spectate.MenuLabel, () => _spectate.MenuAct(), help: () => "Watch a partner through their camera while you're down or dead."));
             ServerBrowser.Extras.Add(new MenuExtra(() => _emotes.MenuLabel(_link), () => _emotes.Open(_link), help: () => "Choose a gesture to play for your partners."));
             // Not while we're in the host's story as a guest: our own story comes back through this version's leave.
