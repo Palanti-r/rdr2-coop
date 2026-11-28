@@ -161,7 +161,6 @@ namespace RDR2Coop.Net
                 {
                     _pingSentTick = _lastHelloTick;
                     _pingPending = true;
-                    _pingMs = -1;
                 }
             }
             Send(Protocol.Hello(Name, _preferHost, Build));
