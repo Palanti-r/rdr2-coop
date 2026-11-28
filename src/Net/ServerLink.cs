@@ -146,12 +146,23 @@ namespace RDR2Coop.Net
                 LogTraffic(nowMs);
         }
 
+        int _pingMs = -1;
+        int _pingSentTick;
+        bool _pingPending;
+        public int PingMs => State == LinkState.Connected ? _pingMs : -1;
+
         bool HelloIfDue(int everyMs)
         {
             lock (_helloLock)
             {
                 if (unchecked(Environment.TickCount - _lastHelloTick) < everyMs) return false;
                 _lastHelloTick = Environment.TickCount;
+                if (State == LinkState.Connected)
+                {
+                    _pingSentTick = _lastHelloTick;
+                    _pingPending = true;
+                    _pingMs = -1;
+                }
             }
             Send(Protocol.Hello(Name, _preferHost, Build));
             return true;
@@ -312,6 +323,14 @@ namespace RDR2Coop.Net
                         }
                         return;
                     }
+                    lock (_helloLock)
+                    {
+                        if (_pingPending && State == LinkState.Connected)
+                        {
+                            _pingMs = Math.Max(0, unchecked(Environment.TickCount - _pingSentTick));
+                            _pingPending = false;
+                        }
+                    }
                     bool fresh = State != LinkState.Connected || MyId != p.MyId;
                     MyId = p.MyId;
                     HostId = p.HostId;
@@ -370,6 +389,7 @@ namespace RDR2Coop.Net
 
         void Drop(string reason, string networkReason, long nowMs)
         {
+            lock (_helloLock) { _pingPending = false; _pingMs = -1; }
             State = LinkState.Connecting;
             MyId = 0;
             HostId = 0;
